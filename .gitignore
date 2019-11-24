@@ -1,0 +1,4 @@
+mate_pair_libs/
+paired_end_reads/
+.idea/
+.snakemake/
