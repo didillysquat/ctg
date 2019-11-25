@@ -9,6 +9,8 @@ mp_raw_read_for_fastqc_ch = Channel.fromPath(params.mp_lib_path)
 pe_raw_read_for_fastqc_ch = Channel.fromPath(params.pe_lib_path)
 
 process make_fastqc_pre_trim {
+    echo true
+    
     input:
     file seq_file from mp_raw_read_for_fastqc_ch
 
