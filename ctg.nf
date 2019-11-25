@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 
-params.mp_lib_path = "/home/humebc/projects/st_genome/mate_pair_libs/raw_reads"
-params.pe_lib_path = "/home/humebc/projects/st_genome/paired_end_reads/raw_reads"
+params.mp_read_paths = "/home/humebc/projects/st_genome/mate_pair_libs/raw_reads/*fastq.gz"
+params.pe_read_paths = "/home/humebc/projects/st_genome/paired_end_reads/raw_reads/*fastq.gz"
 
 /* The channel that will contain the files mate pair and paired end raw seq 
 files that will be consumed by the make_fastqc_pre_trimming process*/
@@ -10,7 +10,7 @@ pe_raw_read_for_fastqc_ch = Channel.fromPath(params.pe_lib_path)
 
 process make_fastqc_pre_trim {
     echo true
-    
+
     input:
     file seq_file from mp_raw_read_for_fastqc_ch
 
