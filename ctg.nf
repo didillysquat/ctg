@@ -237,7 +237,44 @@ if (params.sub_sample){
 
 ch_r_correct_input_mp.subscribe { println "ch_r_correct_input_mp file: $it" }
 ch_r_correct_input_pe.subscribe { println "ch_r_correct_input_pe file: $it" }
-ch_fastqc_post_trim_input_pe.subscribe { println "ch_fastqc_post_trim_input_pe file: $it" }
-ch_fastqc_post_trim_input_mp.subscribe { println "ch_fastqc_post_trim_input_mp file: $it" }
+
 
 // // results.subscribe { println "value: $it" }
+// Now to the pre_trim fastqc for each of the subsampled fastq.gz files
+process fastqc_post_trim_mp{
+	tag "${read}"
+	publishDir 	path: "${params.mp_wkd}/fastqc_post_trim", mode: 'copy',
+		saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
+
+	input:
+	file read from ch_fastqc_post_trim_input_mp.flatten()
+
+	output:
+	file "*_fastqc.{zip,html}" into ch_fastqc_post_trim_results_mp
+
+	script:
+	"""
+	fastqc $read
+	"""
+}
+
+// Now to the pre_trim fastqc for each of the subsampled fastq.gz files
+process fastqc_post_trim_pe{
+	tag "${read}"
+	publishDir 	path: "${params.pe_wkd}/fastqc_post_trim", mode: 'copy',
+		saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
+
+	input:
+	file read from ch_fastqc_post_trim_input_pe.flatten()
+
+	output:
+	file "*_fastqc.{zip,html}" into ch_fastqc_post_trim_results_pe
+
+	script:
+	"""
+	fastqc $read
+	"""
+}
+
+ch_fastqc_post_trim_results_pe.subscribe { println "ch_fastqc_post_trim_results_pe file: $it" }
+ch_fastqc_post_trim_results_mp.subscribe { println "ch_fastqc_post_trim_results_mp file: $it" }
