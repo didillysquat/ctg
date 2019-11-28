@@ -29,8 +29,8 @@ if (params.sub_sample){
 	}
 	
 	// Now do the subsampling using seqtk
+	// The mate pair libraries
 	process sub_sample_mp{
-		echo true
 		tag "${read}"
 		publishDir 	path: "${params.mp_dir_sub}/raw_reads"
 
@@ -38,7 +38,28 @@ if (params.sub_sample){
 		file read from ch_seqtk_mp
 
 		output:
-		file "*_sub.fastq.gz" into results
+		file "*_sub.fastq.gz" into ch_fastqc_mp
+
+		script:
+		
+		read_out = read.getName().replaceAll(".fastq.gz", "_sub.fastq")
+		
+		"""
+		seqtk sample -s100 ${read} 10000 > ${read_out}
+		gzip ${read_out}
+		"""
+	}
+
+	// The paired end libraries
+	process sub_sample_pe{
+		tag "${read}"
+		publishDir 	path: "${params.pe_dir_sub}/raw_reads"
+
+		input:
+		file read from ch_seqtk_pe
+
+		output:
+		file "*_sub.fastq.gz" into ch_fastqc_pe
 
 		script:
 		
@@ -53,6 +74,42 @@ if (params.sub_sample){
 	// Then will need to put this gz compressed file into the ch_fastqc_pr channel for the fastqc
 }else{
 	ch_fastqc_pe = Channel.fromPath("${params.mp_dir}/raw_reads/*.fastq.gz")
+	ch_fastqc_mp = Channel.fromPath("${params.mp_dir}/raw_reads/*.fastq.gz")
 }
 
+	// Now to the pre_trim fastqc for each of the subsampled fastq.gz files
+	process fastqc_pre_trim_mp{
+		tag "${read}"
+		publishDir 	path: "${params.mp_dir_sub}/fastqc_pre_trim", mode: 'copy',
+			saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
+
+		input:
+		file read from ch_fastqc_mp
+
+		output:
+    	file "*_fastqc.{zip,html}" into fastqc_pre_trim_results_mp
+
+		script:
+		"""
+		fastqc $read
+		"""
+	}
+
+	// Now to the pre_trim fastqc for each of the subsampled fastq.gz files
+	process fastqc_pre_trim_pe{
+		tag "${read}"
+		publishDir 	path: "${params.pe_dir_sub}/fastqc_pre_trim", mode: 'copy',
+			saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
+
+		input:
+		file read from ch_fastqc_pe
+
+		output:
+    	file "*_fastqc.{zip,html}" into fastqc_pre_trim_results_pe
+
+		script:
+		"""
+		fastqc $read
+		"""
+	}
 // results.subscribe { println "value: $it" }
