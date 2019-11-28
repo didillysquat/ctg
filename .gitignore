@@ -14,3 +14,6 @@ paired_end_reads/
 .nextflow.log.8
 .nextflow
 work/
+.nextflow.log*
+mate_pair_libs_sub
+paired_end_reads_sub
