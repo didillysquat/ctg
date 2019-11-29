@@ -120,104 +120,92 @@ process fastqc_pre_trim_pe{
 	"""
 }
 
-// //Now trim the reads using trimmomatic
-// // At this point we will have a set of mp/pe processes for if we are working with sub sample
-// // vs is we are not. This is beacause I wasn't able to work out how to get the 
-// // output of the subsampling back into the same tuple format that is created using
-// // the fromFilePairs read in. After this trimming, the output files should be the same
-// // irrespective of whether we are working with subsampled or not. Therefore we will
-// // not need to have two sets of processess as we move forwards.
+// Now trim the reads using trimmomatic
+process trim_reads_mp{
+	tag "${reads[0].getName()}"
+	publishDir 	path: "${params.mp_wkd}/trimmed", mode: 'copy'
 
-// process trim_reads_mp{
-// 	tag "${reads[0].getName()}"
-// 	publishDir 	path: "${params.mp_wkd}/trimmed", mode: 'copy'
-
-// 	input:
-// 	tuple val(base), file(reads) from ch_trim_mp
+	input:
+	tuple val(base), file(reads) from ch_trim_mp
 	
-// 	output:
-// 	// Output that will be used for the post_trim fastqc
-// 	// It is a flast list of all of the trimmed files
-// 	file "*.fq.gz" into ch_fastqc_post_trim_input_mp
-// 	// Output that will be used for the error_correction
-// 	// This is a list of tuples that are the 1P and 2P output files only
-// 	tuple file("*1P.fq.gz"), file("*2P.fq.gz") into ch_r_correct_input_mp
+	output:
+	// Output that will be used for the post_trim fastqc
+	// It is a flast list of all of the trimmed files
+	file "*.fq.gz" into ch_fastqc_post_trim_input_mp
+	// Output that will be used for the error_correction
+	// This is a list of tuples that are the 1P and 2P output files only
+	tuple file("*1P.fq.gz"), file("*2P.fq.gz") into ch_r_correct_input_mp
 
-// 	script:
-// 	outbase = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.fq.gz')
-// 	"""
-// 	trimmomatic PE -threads ${params.trimmomatic_threads} -basein ${reads[0]} \\
-// 		-baseout $outbase \\
-// 		ILLUMINACLIP:${params.tru_seq_pe_fasta_path}:2:30:10:2:keepBothReads \\
-// 		LEADING:3 TRAILING:3 MINLEN:36 HEADCROP:11
-// 	"""
-// }
+	script:
+	outbase = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.fq.gz')
+	"""
+	trimmomatic PE -threads ${params.trimmomatic_threads} -basein ${reads[0]} \\
+		-baseout $outbase \\
+		ILLUMINACLIP:${params.tru_seq_pe_fasta_path}:2:30:10:2:keepBothReads \\
+		LEADING:3 TRAILING:3 MINLEN:36 HEADCROP:11
+	"""
+}
 
-// process trim_reads_pe{
-// 	tag "${fwd_rreads[0].getName()ead}"
-// 	publishDir 	path: "${params.pe_wkd}/trimmed", mode: 'copy'
+process trim_reads_pe{
+	tag "${reads[0].getName()}"
+	publishDir 	path: "${params.pe_wkd}/trimmed", mode: 'copy'
 
-// 	input:
-// 	tuple val(base), file(reads) from ch_trim_pe
+	input:
+	tuple val(base), file(reads) from ch_trim_pe
 	
-// 	output:
-// 	file "*.fq.gz" into ch_fastqc_post_trim_input_pe
-// 	tuple file("*1P.fq.gz"), file("*2P.fq.gz") into ch_r_correct_input_pe
+	output:
+	file "*.fq.gz" into ch_fastqc_post_trim_input_pe
+	tuple file("*1P.fq.gz"), file("*2P.fq.gz") into ch_r_correct_input_pe
 
-// 	script:
-// 	//At this point we can get rid of the _sub part of the name if it exists
-// 	// This way the file names will be the same from here on
-// 	// whether we are working with subsampled or not
-// 	outbase = fwd_read.getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.fq.gz')
-// 	"""
-// 	trimmomatic PE -threads ${params.trimmomatic_threads} -basein $fwd_read \\
-// 		-baseout $outbase \\
-// 		ILLUMINACLIP:${params.tru_seq_pe_fasta_path}:2:30:10:2:keepBothReads \\
-// 		LEADING:3 TRAILING:3 MINLEN:36 HEADCROP:11
-// 	"""
-// }
+	script:
+	//At this point we can get rid of the _sub part of the name if it exists
+	// This way the file names will be the same from here on
+	// whether we are working with subsampled or not
+	outbase = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.fq.gz')
+	"""
+	trimmomatic PE -threads ${params.trimmomatic_threads} -basein ${reads[0]} \\
+		-baseout $outbase \\
+		ILLUMINACLIP:${params.tru_seq_pe_fasta_path}:2:30:10:2:keepBothReads \\
+		LEADING:3 TRAILING:3 MINLEN:36 HEADCROP:11
+	"""
+}
 
+// // results.subscribe { println "value: $it" }
+// Now to the pre_trim fastqc for each of the subsampled fastq.gz files
+process fastqc_post_trim_mp{
+	tag "${read}"
+	publishDir 	path: "${params.mp_wkd}/fastqc_post_trim", mode: 'copy',
+		saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
 
-ch_trim_pe.subscribe { println "ch_trim_pe file: $it" }
-ch_trim_mp.subscribe { println "ch_trim_mp file: $it" }
+	input:
+	file read from ch_fastqc_post_trim_input_mp.flatten()
 
+	output:
+	file "*_fastqc.{zip,html}" into ch_fastqc_post_trim_results_mp
 
-// // // results.subscribe { println "value: $it" }
-// // Now to the pre_trim fastqc for each of the subsampled fastq.gz files
-// process fastqc_post_trim_mp{
-// 	tag "${read}"
-// 	publishDir 	path: "${params.mp_wkd}/fastqc_post_trim", mode: 'copy',
-// 		saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
+	script:
+	"""
+	fastqc $read
+	"""
+}
 
-// 	input:
-// 	file read from ch_fastqc_post_trim_input_mp.flatten()
+// Now to the pre_trim fastqc for each of the subsampled fastq.gz files
+process fastqc_post_trim_pe{
+	tag "${read}"
+	publishDir 	path: "${params.pe_wkd}/fastqc_post_trim", mode: 'copy',
+		saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
 
-// 	output:
-// 	file "*_fastqc.{zip,html}" into ch_fastqc_post_trim_results_mp
+	input:
+	file read from ch_fastqc_post_trim_input_pe.flatten()
 
-// 	script:
-// 	"""
-// 	fastqc $read
-// 	"""
-// }
+	output:
+	file "*_fastqc.{zip,html}" into ch_fastqc_post_trim_results_pe
 
-// // Now to the pre_trim fastqc for each of the subsampled fastq.gz files
-// process fastqc_post_trim_pe{
-// 	tag "${read}"
-// 	publishDir 	path: "${params.pe_wkd}/fastqc_post_trim", mode: 'copy',
-// 		saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
-
-// 	input:
-// 	file read from ch_fastqc_post_trim_input_pe.flatten()
-
-// 	output:
-// 	file "*_fastqc.{zip,html}" into ch_fastqc_post_trim_results_pe
-
-// 	script:
-// 	"""
-// 	fastqc $read
-// 	"""
-// }
+	script:
+	"""
+	fastqc $read
+	"""
+}
 
 // // Error correction of the read pairs with rcorrector
 // // Attemp having two read in channels one which we get the val from and one which we get a 
