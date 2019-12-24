@@ -1,5 +1,0 @@
-# path to the paired-end raw data
-paired_end_path: "/home/humebc/projects/st_genome/paired_end_reads"
-# path to the mat-pair raw data
-mate_pair_path: "/home/humebc/projects/st_genome/mate_pair_libs"
-
