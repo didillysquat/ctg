@@ -1,0 +1,9 @@
+channels:
+  - bioconda
+dependencies:
+  - rcorrector
+  - trimmomatic
+  - fastqc
+  - seqtk
+  - bbmap
+  - nxtrim
