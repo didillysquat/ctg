@@ -28,7 +28,6 @@ if (params.sub_sample){
 	// The full size raw files that will be used as input to the seqtk
 	// We will put all of the sequencing files into a single channel
 	Channel.fromFilePairs(["${params.mp_dir}/raw_reads/*{R1,R2}.fastq.gz", "${params.pe_dir}/raw_reads/*{R1,R2}.fastq.gz"]).set{ch_sub_sample_seqtk_input}
-	// Channel.fromFilePairs(["${params.mp_dir}/raw_reads/*{R1,R2}.fastq.gz"]).set{ch_sub_sample_seqtk_input}
 	
 	// The directory for the sub_sampled raw reads to be output
 	params.mp_dir_sub_raw_reads = "${params.mp_wkd}/raw_reads" 	
@@ -180,31 +179,158 @@ process rcorrector{
 // to parse through the tuples and remove those tuples that don't contain the 
 // respective M_18 or M_17 string
 // Whoo! This works!
-ch_mp_out.toList().flatMap{
-		// Create the new list to return
-		List output_list = new ArrayList();
-		// for each tuple in the list
-		for (i=0; i<(it.size()); i++){
-			println("the get name function gives us ${it[i][0].getName()}")
-			if (it[i][0].getName().contains("M_18")){
-				// Then this is an mp tuple
-				// add it to the output_list
-				println("Tuple ${it[i]} contains M_18 so is an mp item. Adding to the output list")
-				output_list.add(it[i])
-				println("Output list now contains ${output_list}")
-			}else{
-				// Then this should be a pe tuple
-				println("Tuple ${it[i]} does not contain M_18 so is a pe item.")
-			}
-		}
-		println("We have finished iterating through the channel and are ready to output")
-		println("output list looks like this:")
-		println("${output_list}")
-		return output_list
-    }.view()
+// ch_mp_out.toList().flatMap{
+// 		// Create the new list to return
+// 		List output_list = new ArrayList();
+// 		// for each tuple in the list
+// 		for (i=0; i<(it.size()); i++){
+// 			println("the get name function gives us ${it[i][0].getName()}")
+// 			if (it[i][0].getName().contains("M_18")){
+// 				// Then this is an mp tuple
+// 				// add it to the output_list
+// 				println("Tuple ${it[i]} contains M_18 so is an mp item. Adding to the output list")
+// 				output_list.add(it[i])
+// 				println("Output list now contains ${output_list}")
+// 			}else{
+// 				// Then this should be a pe tuple
+// 				println("Tuple ${it[i]} does not contain M_18 so is a pe item.")
+// 			}
+// 		}
+// 		println("We have finished iterating through the channel and are ready to output")
+// 		println("output list looks like this:")
+// 		println("${output_list}")
+// 		return output_list
+//     }.view()
 
 
 // // After error correction we will want to split the channels up by paired end and mate pair
+// We will map diferently according to whether we are doing paired end or mate pair
+
+// Map the paired end reads to the lutea genome
+// process bbmap_pe{
+// 	tag "$rcorrected_read_one"
+// 	conda "envs/stage_two.yaml"
+
+// 	input:
+// 	tuple file(rcorrected_read_one_pe), file(rcorrected_read_two_pe) from ch_pe_out.toList().flatMap{
+// 		// Create the new list to return
+// 		List output_list = new ArrayList();
+// 		// for each tuple in the list
+// 		for (i=0; i<(it.size()); i++){
+// 			// println("the get name function gives us ${it[i][0].getName()}")
+// 			if (it[i][0].getName().contains("M_17")){
+// 				// Then this is an mp tuple
+// 				// add it to the output_list
+// 				// println("Tuple ${it[i]} contains M_17 so is an mp item. Adding to the output list")
+// 				output_list.add(it[i])
+// 				// println("Output list now contains ${output_list}")
+// 			}else{
+// 				// Then this should be a pe tuple
+// 				// println("Tuple ${it[i]} does not contain M_17 so is a pe item.")
+// 			}
+// 		}
+// 		// println("We have finished iterating through the channel and are ready to output")
+// 		// println("output list looks like this:")
+// 		// println("${output_list}")
+// 		return output_list
+//     }
+
+// 	output:
+// 	tuple file("*.mapped.sam"), file("*.unmapped.sam") into ch_mapped_unmapped_output
+// 	tuple file("*constats.txt"), file("*covhist.txt"), file("*basecov.txt"), file("*bincov.txt") into ch_mapping_stats_output
+
+// 	script:
+// 	seq_sample_basename = rcorrected_read_one_pe.getName().replaceAll("1P.cor.fq.gz", "")
+// 	"""
+// 	if [[ $seq_sample_basename == *"M_17"* ]]; then
+//   		bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.fq covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
+// 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
+// 		bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.fq covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
+// 	fi
+// 	"""
+// }
+
+
+// bbmap is really useful. You can set the minratio score which is the ratio of th actual best score
+// over the best possible score. It basically a match quality cutoff.
+// I want to try something quite ambitious which is to compare the percentage of mapping
+// to the GC content of the mapped and unmapped reads.
+// In theory this will tell us whether the mappings are really host or whether they are
+// zooxs reads being mapped to the host genome.
+// To do this, I will use the each method of next flow to run instances of bbmap for every
+// library and for each library I will run 5% quality thresholds sets.
+// We will then be able to plot up the matches vs the GC content change.
+// To minimise space we can delete the output files once they have been made.
+// The other infomation we need gets output to stdout so we will collect that too.
+// Once the bbmap is complete we will run stats.sh to generate the gc content of the mapped and unmapped
+// We will then need to collect all of this for plotting with Python.
+// This can be a figure in the paper.
+quality_values = [1, 0.95, 0.90, 0.85, 0.8, 0.75, 0.7, 0.65, 0.60, 0.55, 0.50]
+process bbmap_gc_investigation{
+	tag "${rcorrected_read_one_pe.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}_$qual_val"
+	conda "envs/stage_two.yaml"
+	// I have set the CPUs here but will not limit the threads in the actual
+	// command. This should be a good balance between still making use of as many threads
+	// as possible but not having innefficient load distribution across the threads
+	// i.e. spending most of the cpu time in the kernel.
+	cpus params.bbmap_gc_investigation_threads
+	publishDir path: "gc_lutea_maping"
+
+	input:
+	tuple file(rcorrected_read_one_pe), file(rcorrected_read_two_pe) from ch_pe_out
+	each qual_val from quality_values
+
+	output:
+	tuple file("*.log.txt"), file("*.gchist.txt"), file("*.gc_content_hist_unmapped.txt"), file("*.gc_content_hist_mapped.txt") into ch_mapped_unmapped_output
+
+	script:
+	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
+	seq_sample_basename = rcorrected_read_one_pe.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
+	"""
+	# First run bbmap.sh to produce the mappe and unmapped fastqs
+	# By defualt, a pair that have one read mapped and one unmapped will be put into the mapped file (i.e. it is conservative). We will not change this default.
+	if [[ $seq_sample_basename == *"M_17"* ]]; then
+  		bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1
+	elif [[ $seq_sample_basename == *"M_18"* ]]; then
+		bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1
+	fi
+	# get the gc historgram files for the mapped
+	stats.sh in=${seq_sample_basename}.mapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_mapped.txt gcbins=100
+	# get the gc historgram files for the unmapped
+	stats.sh in=${seq_sample_basename}.unmapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_unmapped.txt gcbins=100
+	# then remove the large datafiles
+	rm ${seq_sample_basename}.unmapped.fastq
+	rm ${seq_sample_basename}.mapped.fastq
+	# The output that we need is not written to stdout but rather to the .command.log file output by nextflow
+	# We will attempt to rename this and extract it to the outputs
+	cp .command.log ${seq_sample_basename}.${qual_val}.log.txt
+	"""
+}
+
+// process bbmap_pe{
+// 	tag "$rcorrected_read_one_pe"
+// 	conda "envs/stage_two.yaml"
+
+// 	input:
+// 	tuple file(rcorrected_read_one_pe), file(rcorrected_read_two_pe) from ch_pe_out
+
+// 	output:
+// 	tuple file("*mapped.sam"), file("*unmapped.sam") into ch_mapped_unmapped_output
+// 	tuple file("*constats.txt"), file("*covhist.txt"), file("*basecov.txt"), file("*bincov.txt") into ch_mapping_stats_output
+
+// 	script:
+// 	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
+// 	seq_sample_basename = rcorrected_read_one_pe.getName().replaceAll("1P.cor.fq.gz", "")
+// 	"""
+// 	if [[ $seq_sample_basename == *"M_17"* ]]; then
+// 		echo This contains M_17 so we are running bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
+//   		bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt nodisk printunmappedcount minratio=0.9 k=14 gchist=${seq_sample_basename}gchist.txt
+// 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
+// 		echo This contains M_18 so we are running bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
+// 		bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt nodisk printunmappedcount minratio=0.9 k=14 gchist=${seq_sample_basename}gchist.txt
+// 	fi
+// 	"""
+// }
 
 
 // // The paired end reads will go into BBMerge, to merge as many as possible
