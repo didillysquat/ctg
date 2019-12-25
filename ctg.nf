@@ -3,6 +3,9 @@
 // The git and base directory
 params.basedir = "/home/humebc/projects/st_genome"
 
+// Directory with all of the python scripts
+params.bin_dir = "${workflow.launchDir}/bin"
+
 // The directories for each the mate pair libraries and the paired end libraries
 params.mp_dir = "${params.basedir}/mate_pair_libs"
 params.pe_dir = "${params.basedir}/paired_end_reads"
@@ -161,7 +164,7 @@ process rcorrector{
 	tuple file(trimmed_read_one), file(trimmed_read_two) from ch_rcorrector_input
 
 	output:
-	tuple file("*1P.cor.fq.gz"), file("*2P.cor.fq.gz") into ch_mp_out, ch_pe_out
+	tuple file("*1P.cor.fq.gz"), file("*2P.cor.fq.gz") into ch_bbmap_gc_investigation_input, ch_bbmap_filter_lutea_input
 
 	script:
 	"""
@@ -265,9 +268,13 @@ process rcorrector{
 // Once the bbmap is complete we will run stats.sh to generate the gc content of the mapped and unmapped
 // We will then need to collect all of this for plotting with Python.
 // This can be a figure in the paper.
-quality_values = [1, 0.95, 0.90, 0.85, 0.8, 0.75, 0.7, 0.65, 0.60, 0.55, 0.50]
+
+// The results are very interesting. They show that the pe reads should probably have a higher
+// minratio than the mp reads. For the pe a ratio of 0.85 looks like it would be good
+// For the mp much lower i.e. 0.6 looks like it would be appropriate.
+quality_values = [1, 0.95, 0.90, 0.85, 0.8, 0.75, 0.7, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30]
 process bbmap_gc_investigation{
-	tag "${rcorrected_read_one_pe.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}_$qual_val"
+	tag "${rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}_$qual_val"
 	conda "envs/stage_two.yaml"
 	// I have set the CPUs here but will not limit the threads in the actual
 	// command. This should be a good balance between still making use of as many threads
@@ -277,7 +284,7 @@ process bbmap_gc_investigation{
 	publishDir path: "gc_lutea_maping"
 
 	input:
-	tuple file(rcorrected_read_one_pe), file(rcorrected_read_two_pe) from ch_pe_out
+	tuple file(rcorrected_read_one), file(rcorrected_read_two_pe) from ch_bbmap_gc_investigation_input
 	each qual_val from quality_values
 
 	output:
@@ -285,19 +292,19 @@ process bbmap_gc_investigation{
 
 	script:
 	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
-	seq_sample_basename = rcorrected_read_one_pe.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
+	seq_sample_basename = rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
 	"""
 	# First run bbmap.sh to produce the mappe and unmapped fastqs
 	# By defualt, a pair that have one read mapped and one unmapped will be put into the mapped file (i.e. it is conservative). We will not change this default.
 	if [[ $seq_sample_basename == *"M_17"* ]]; then
-  		bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1
+  		bbmap.sh in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000
 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
-		bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1
+		bbmap.sh rcs=f in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000
 	fi
 	# get the gc historgram files for the mapped
-	stats.sh in=${seq_sample_basename}.mapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_mapped.txt gcbins=100
+	stats.sh in=${seq_sample_basename}.mapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_mapped.txt gcbins=1000
 	# get the gc historgram files for the unmapped
-	stats.sh in=${seq_sample_basename}.unmapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_unmapped.txt gcbins=100
+	stats.sh in=${seq_sample_basename}.unmapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_unmapped.txt gcbins=1000
 	# then remove the large datafiles
 	rm ${seq_sample_basename}.unmapped.fastq
 	rm ${seq_sample_basename}.mapped.fastq
@@ -307,54 +314,67 @@ process bbmap_gc_investigation{
 	"""
 }
 
-// process bbmap_pe{
-// 	tag "$rcorrected_read_one_pe"
-// 	conda "envs/stage_two.yaml"
+process bbmap_gc_supp_figure{
+	tag ${gc_content_hist_mapped.getName().replaceAll(".gc_content_hist_mapped.txt", "")}
+	conda "envs/standard_python.yaml"
+	publishDir path: "figures"
 
-// 	input:
-// 	tuple file(rcorrected_read_one_pe), file(rcorrected_read_two_pe) from ch_pe_out
+	input:
+	tuple file(log.txt), file(gchist.txt), file(gc_content_hist_unmapped.txt), file(gc_content_hist_mapped.txt) from ch_mapped_unmapped_output
 
-// 	output:
-// 	tuple file("*mapped.sam"), file("*unmapped.sam") into ch_mapped_unmapped_output
-// 	tuple file("*constats.txt"), file("*covhist.txt"), file("*basecov.txt"), file("*bincov.txt") into ch_mapping_stats_output
+	output:
+	tuple file("gc_to_mapping_pct.svg"), file("gc_to_mapping_pct.svg") into bbmap_gc_supp_figure_output
 
-// 	script:
-// 	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
-// 	seq_sample_basename = rcorrected_read_one_pe.getName().replaceAll("1P.cor.fq.gz", "")
-// 	"""
-// 	if [[ $seq_sample_basename == *"M_17"* ]]; then
-// 		echo This contains M_17 so we are running bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
-//   		bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt nodisk printunmappedcount minratio=0.9 k=14 gchist=${seq_sample_basename}gchist.txt
-// 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
-// 		echo This contains M_18 so we are running bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
-// 		bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.sam covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt nodisk printunmappedcount minratio=0.9 k=14 gchist=${seq_sample_basename}gchist.txt
-// 	fi
-// 	"""
-// }
+	"""
+	python3 ${params.bin_dir}/summarise_gc_content_mapping_figure.py
+	"""
+}
+
+// mapp the error corrected reads to the lutea genome using the predetermined minratio scores.
+// These were determined from the bbmap_gc_investigation process above
+process bbmap_filter_lutea{
+	tag "${rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}_$qual_val"
+	conda "envs/stage_two.yaml"
+
+	input:
+	tuple file(rcorrected_read_one), file(rcorrected_read_two_pe) from ch_bbmap_filter_lutea_input
+
+	output:
+	tuple file("*.unmapped.fastq.gz") into ch_bbmerge_input
+
+	script:
+	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
+	seq_sample_basename = rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
+	"""
+	if [[ $seq_sample_basename == *"M_17"* ]]; then
+  		bbmap.sh in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.85 k=14  maxsites=1
+	elif [[ $seq_sample_basename == *"M_18"* ]]; then
+		bbmap.sh rcs=f in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.60 k=14  maxsites=1
+	fi
+	"""
+}
 
 
-// // The paired end reads will go into BBMerge, to merge as many as possible
-// process bbMerge{
-// 	tag "$rcorrected_read_one"
-// 	conda "envs/general_conda_env.yaml"
+// The paired end reads will go into BBMerge, to merge as many as possible
+process bbMerge{
+	tag "$rcorrected_read_one"
+	conda "envs/general_conda_env.yaml"
 
-// 	input:
-// 	tuple file(rcorrected_read_one_pe), file(rcorrected_read_two_pe) from ch_pe_out
+	input:
+	file unmapped_fastq from ch_bbmerge_input
 
-// 	output:
-// 	tuple file(".merged.fastq.gz"), file("_1.merged.fastq.gz"), file("_2.merged.fastq.gz") into ch_bbmerge_out
-// 	file "*ihist.txt" into ch_bbmerge_ihist_out
+	output:
+	tuple file(".merged.fastq.gz"), file(".merged.fastq.gz") into ch_bbmerge_out
+	file "*ihist.txt" into ch_bbmerge_ihist_out
 
-// 	script:
-// 	out_merged_name = rcorrected_read_one_pe.getName().replaceAll("1P.cor.fq.gz", ".merged.fq.gz")
-// 	one_unmerged_name = rcorrected_read_one_pe.getName().replaceAll(".fq.gz", ".unmerged.fq.gz")
-// 	two_unmerged_name = rcorrected_read_two_pe.getName().replaceAll(".fq.gz", ".unmerged.fq.gz")
-// 	ihist_name = rcorrected_read_one_pe.getName().replaceAll("1P.cor.fq.gz", ".ihist.txt")
-// 	"""
-// 	bbmerge-auto.sh in1=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe out=$out_merged_name outu1=$one_unmerged_name outu2=$two_unmerged_name ihist=$ihist_name ecct extend2=20 iterations=5
-// 	"""
-
-// }
+	script:
+	out_merged_name = rcorrected_read_one_pe.getName().replaceAll(".fastq.gz", ".merged.fastq.gz")
+	unmerged_name = rcorrected_read_one_pe.getName().replaceAll(".fastq.gz", ".unmerged.fastq.gz")
+	ihist_name = rcorrected_read_one_pe.getName().replaceAll(".fastq.gz", ".ihist.txt")
+	"""
+	bbmerge-auto.sh in=$rcorrected_read_one_pe out=$out_merged_name outu=$unmerged_name ihist=$ihist_name ecct extend2=20 iterations=5
+	"""
+}
 
 // The mate pair reads will go into NXtrim to characterise them
 
