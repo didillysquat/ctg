@@ -410,42 +410,46 @@ process bbMerge{
 
 // The mate pair reads will go into NXtrim to characterise them
 
-// process nxtrim{
-// 	tag "$rcorrected_read_one"
-// 	conda "envs/general_conda_env.yaml"
+process nxtrim{
+	tag "$unmapped_fastq_gz"
+	conda "envs/nxtrim_and_pigz.yaml"
 
-// 	input:
-// 	// Importantly we only want the mate pair reads here so the M_18 files
-// 	file unmapped_fastq_gz from ch_nxtrim_input.toList().flatMap{
-// 		// Create the new list to return
-// 		List output_list = new ArrayList();
-// 		// for each tuple in the list
-// 		for (i=0; i<(it.size()); i++){
-// 			if (it[i][0].getName().contains("M_18")){
-// 				output_list.add(it[i])
-// 			}
-// 		}
-// 		return output_list
-//     }
+	input:
+	// Importantly we only want the mate pair reads here so the M_18 files
+	file unmapped_fastq_gz from ch_nxtrim_input.toList().flatMap{
+		// Create the new list to return
+		List output_list = new ArrayList();
+		// for each tuple in the list
+		for (i=0; i<(it.size()); i++){
+			if (it[i].getName().contains("M_18")){
+				output_list.add(it[i])
+			}
+		}
+		return output_list
+    }
 
-// 	output:
-// 	tuple file("*mp.fastq.gz"), file("*pe.fastq.gz"), file("*se.fastq.gz"), file("*unknown.fastq.gz") into ch_nxtrim_output
+	output:
+	tuple file("*mp.fastq.gz"), file("*pe.fastq.gz"), file("*se.fastq.gz"), file("*unknown.fastq.gz") into ch_nxtrim_output
 
-// 	script:
-// 	sample_name_out = rcorrected_read_one_mp.getName().replaceAll("*.unmapped.fastq.gz", "")
-// 	sample_name_fwd_uncomp = "${sample_name_out}_1.fastq"
-// 	sample_name_rev_uncomp = "${sample_name_out}_2.fastq"
-// 	sample_name_fwd_comp = "${sample_name_out}_1.fastq.gz"
-// 	sample_name_rev_comp = "${sample_name_out}_2.fastq.gz"
-// 	// We need to have paired reads here rather than the single interleaved fastq that we get
-// 	// from the bbmap. We will use the deinterleave_fastq.sh in bin to unpair the reads
-// 	"""
-// 	# First decompress and deinterleave the fastq.gz file
-// 	gzip -dc $unmapped_fastq_gz | ${params.bin_dir}/deinterleave_fastq.sh $sample_name_rev_uncomp $sample_name_rev_uncomp compress
-// 	# Now put the paired files into nxtrim. We want output to be compressed
-// 	nxtrim -1 $sample_name_fwd_comp -2 $sample_name_rev_comp -O $sample_name_out
-// 	"""
-// }
+	script:
+	sample_name_out = unmapped_fastq_gz.getName().replaceAll(".unmapped.fastq.gz", "")
+	unmapped_fastq = unmapped_fastq_gz.getName().replaceAll(".gz", "")
+	sample_name_fwd_uncomp = "${sample_name_out}_1.fastq"
+	sample_name_rev_uncomp = "${sample_name_out}_2.fastq"
+	sample_name_fwd_comp = "${sample_name_out}_1.fastq.gz"
+	sample_name_rev_comp = "${sample_name_out}_2.fastq.gz"
+	// We need to have paired reads here rather than the single interleaved fastq that we get
+	// from the bbmap. We will use the deinterleave_fastq.sh in bin to unpair the reads
+	"""
+	# First decompress and deinterleave the fastq.gz file
+	gzip -df $unmapped_fastq_gz
+	python3 ${params.bin_dir}/deinterleave_paired_seq_fastq.py $unmapped_fastq $sample_name_fwd_uncomp $sample_name_rev_uncomp
+	# now compress the files
+	gzip $sample_name_fwd_uncomp $sample_name_rev_uncomp
+	# Now put the paired files into nxtrim. We want output to be compressed
+	nxtrim -1 $sample_name_fwd_comp -2 $sample_name_rev_comp -O $sample_name_out
+	"""
+}
 
 // So that we don't lose the ability to use the resume option in nextflow, we will start another conda environment here
 // We'll call it stage_two.yaml.
