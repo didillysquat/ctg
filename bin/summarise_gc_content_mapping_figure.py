@@ -68,6 +68,8 @@ class gc_map_figure:
             gc_plotter.plot_mapping_pct()
             gc_plotter.annotate()
         plt.tight_layout()
+        plt.savefig("gc_to_mapping_pct.svg")
+        plt.savefig("gc_to_mapping_pct.png", dpi=1200)
         foo = 'bar'
             
 class GCPlotter:
@@ -75,7 +77,7 @@ class GCPlotter:
         self.ax = ax
         self.ax2 = self.ax.twinx()
         self.lib_name = lib_name
-        self.qual_vals = ['1', '0.95', '0.90', '0.85', '0.8', '0.75', '0.7', '0.65', '0.60', '0.55', '0.50']
+        self.qual_vals = ['1', '0.95', '0.90', '0.85', '0.8', '0.75', '0.7', '0.65', '0.60', '0.55', '0.50', '0.45', '0.40', '0.35', '0.30']
         self.gchist_file_path = os.path.join('.', f'{lib_name}.gchist.txt')
         self.unmapped_gc_path_list = [os.path.join('.', f'{lib_name}.{qual_val}.gc_content_hist_unmapped.txt') for qual_val in self.qual_vals]
         self.mapped_gc_path_list = [os.path.join('.', f'{lib_name}.{qual_val}.gc_content_hist_mapped.txt') for qual_val in self.qual_vals]
