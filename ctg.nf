@@ -164,7 +164,7 @@ process rcorrector{
 	tuple file(trimmed_read_one), file(trimmed_read_two) from ch_rcorrector_input
 
 	output:
-	tuple file("*1P.cor.fq.gz"), file("*2P.cor.fq.gz") into ch_bbmap_gc_investigation_input, ch_bbmap_filter_lutea_input
+	tuple file("*1P.cor.fq.gz"), file("*2P.cor.fq.gz") into ch_bbmerge_input, ch_nxtrim_input
 
 	script:
 	"""
@@ -175,83 +175,82 @@ process rcorrector{
 // ch_mp_out.toList().view()
 
 
-// Each of the ouput channels from rcorrector has both the paired end
-// and the mate pairs file sets in them.
-// We want to remove the seq types that are not required respectively 
-// from each channel. To do this we will write a map function
-// to parse through the tuples and remove those tuples that don't contain the 
-// respective M_18 or M_17 string
-// Whoo! This works!
-// ch_mp_out.toList().flatMap{
-// 		// Create the new list to return
-// 		List output_list = new ArrayList();
-// 		// for each tuple in the list
-// 		for (i=0; i<(it.size()); i++){
-// 			println("the get name function gives us ${it[i][0].getName()}")
-// 			if (it[i][0].getName().contains("M_18")){
-// 				// Then this is an mp tuple
-// 				// add it to the output_list
-// 				println("Tuple ${it[i]} contains M_18 so is an mp item. Adding to the output list")
-// 				output_list.add(it[i])
-// 				println("Output list now contains ${output_list}")
-// 			}else{
-// 				// Then this should be a pe tuple
-// 				println("Tuple ${it[i]} does not contain M_18 so is a pe item.")
-// 			}
-// 		}
-// 		println("We have finished iterating through the channel and are ready to output")
-// 		println("output list looks like this:")
-// 		println("${output_list}")
-// 		return output_list
-//     }.view()
-
-
 // // After error correction we will want to split the channels up by paired end and mate pair
 // We will map diferently according to whether we are doing paired end or mate pair
 
-// Map the paired end reads to the lutea genome
-// process bbmap_pe{
-// 	tag "$rcorrected_read_one"
-// 	conda "envs/stage_two.yaml"
 
-// 	input:
-// 	tuple file(rcorrected_read_one_pe), file(rcorrected_read_two_pe) from ch_pe_out.toList().flatMap{
-// 		// Create the new list to return
-// 		List output_list = new ArrayList();
-// 		// for each tuple in the list
-// 		for (i=0; i<(it.size()); i++){
-// 			// println("the get name function gives us ${it[i][0].getName()}")
-// 			if (it[i][0].getName().contains("M_17")){
-// 				// Then this is an mp tuple
-// 				// add it to the output_list
-// 				// println("Tuple ${it[i]} contains M_17 so is an mp item. Adding to the output list")
-// 				output_list.add(it[i])
-// 				// println("Output list now contains ${output_list}")
-// 			}else{
-// 				// Then this should be a pe tuple
-// 				// println("Tuple ${it[i]} does not contain M_17 so is a pe item.")
-// 			}
-// 		}
-// 		// println("We have finished iterating through the channel and are ready to output")
-// 		// println("output list looks like this:")
-// 		// println("${output_list}")
-// 		return output_list
-//     }
 
-// 	output:
-// 	tuple file("*.mapped.sam"), file("*.unmapped.sam") into ch_mapped_unmapped_output
-// 	tuple file("*constats.txt"), file("*covhist.txt"), file("*basecov.txt"), file("*bincov.txt") into ch_mapping_stats_output
 
-// 	script:
-// 	seq_sample_basename = rcorrected_read_one_pe.getName().replaceAll("1P.cor.fq.gz", "")
-// 	"""
-// 	if [[ $seq_sample_basename == *"M_17"* ]]; then
-//   		bbmap.sh in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.fq covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
-// 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
-// 		bbmap.sh rcs=f in=$rcorrected_read_one_pe in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}mapped.sam outu=${seq_sample_basename}unmapped.fq covstats=${seq_sample_basename}constats.txt covhist=${seq_sample_basename}covhist.txt basecov=${seq_sample_basename}basecov.txt bincov=${seq_sample_basename}bincov.txt
-// 	fi
-// 	"""
-// }
+// TODO it actually makes more sense to do the mapping after the bbmerge and nxtrim treatement
+// SO that we can get an idea of insert length.
+
+// The paired end reads will go into BBMerge, to merge as many as possible
+process bbMerge{
+	tag "$error_corrected_fastq_gz_one"
+	conda "envs/general_conda_env.yaml"
+	// I have set the CPUs here but will not limit the threads in the actual
+	// command. This should be a good balance between still making use of as many threads
+	// as possible but not having innefficient load distribution across the threads
+	// i.e. spending most of the cpu time in the kernel.
+	cpus params.bbmerge_threads
+	input:
+	// Importantly we only want the paried end reads here so the M_17 files
+	tuple file(error_corrected_fastq_gz_one), file(error_corrected_fastq_gz_two) from ch_bbmerge_input.toList().flatMap{
+		// Create the new list to return
+		List output_list = new ArrayList();
+		// for each tuple in the list
+		for (i=0; i<(it.size()); i++){
+			if (it[i][0].getName().contains("M_17")){
+				output_list.add(it[i])
+			}
+		}
+		return output_list
+    }
+
+	output:
+	tuple file("*.merged.fastq.gz"), file("*.unmerged.fastq.gz") into ch_pe_bbmap_filter_lutea_input, ch_pe_bbmap_gc_investigation_input
+	file "*ihist.txt" into ch_bbmerge_ihist_out
+
+	script:
+	out_merged_name = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", ".merged.fastq.gz")
+	unmerged_name = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", ".unmerged.fastq.gz")
+	ihist_name = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", ".ihist.txt")
+	"""
+	bbmerge-auto.sh in1=$error_corrected_fastq_gz_one in2=$error_corrected_fastq_gz_two out=$out_merged_name outu=$unmerged_name ihist=$ihist_name ecct extend2=20 iterations=5
+	"""
+}
+
+// The mate pair reads will go into NXtrim to characterise them
+
+process nxtrim{
+	tag "$error_corrected_fastq_gz_one"
+	conda "envs/nxtrim_and_pigz.yaml"
+
+	input:
+	// Importantly we only want the mate pair reads here so the M_18 files
+	tuple file(error_corrected_fastq_gz_one), file(error_corrected_fastq_gz_two) from ch_nxtrim_input.toList().flatMap{
+		// Create the new list to return
+		List output_list = new ArrayList();
+		// for each tuple in the list
+		for (i=0; i<(it.size()); i++){
+			if (it[i][0].getName().contains("M_18")){
+				output_list.add(it[i])
+			}
+		}
+		return output_list
+    }	
+
+	output:
+	tuple file("*mp.fastq.gz"), file("*pe.fastq.gz"), file("*se.fastq.gz"), file("*unknown.fastq.gz") into ch_mp_bbmap_filter_lutea_input, ch_mp_bbmap_gc_investigation_input
+
+	script:
+	sample_name_out = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", "")
+	// We need to have paired reads here rather than the single interleaved fastq that we get
+	// from the bbmap. We will use the deinterleave_fastq.sh in bin to unpair the reads
+	"""
+	nxtrim -1 $error_corrected_fastq_gz_one -2 $error_corrected_fastq_gz_two -O $sample_name_out
+	"""
+}
 
 
 // bbmap is really useful. You can set the minratio score which is the ratio of th actual best score
@@ -269,50 +268,58 @@ process rcorrector{
 // We will then need to collect all of this for plotting with Python.
 // This can be a figure in the paper.
 
+// The command for getting average length and stdev: awk 'BEGIN { t=0.0;sq=0.0; n=0;} ;NR%4==2 {n++;L=length($0);t+=L;sq+=L*L;}END{m=t/n;printf("total %d avg=%f stddev=%f\n",n,m,sqrt(sq/n-m*m));}' *.fastq
+
 // The results are very interesting. They show that the pe reads should probably have a higher
 // minratio than the mp reads. For the pe a ratio of 0.85 looks like it would be good
 // For the mp much lower i.e. 0.6 looks like it would be appropriate.
-// quality_values = [1, 0.95, 0.90, 0.85, 0.8, 0.75, 0.7, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30]
-// process bbmap_gc_investigation{
-// 	tag "${rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}_$qual_val"
-// 	conda "envs/stage_two.yaml"
-// 	// I have set the CPUs here but will not limit the threads in the actual
-// 	// command. This should be a good balance between still making use of as many threads
-// 	// as possible but not having innefficient load distribution across the threads
-// 	// i.e. spending most of the cpu time in the kernel.
-// 	cpus params.bbmap_gc_investigation_threads
-// 	publishDir path: "gc_lutea_maping"
+quality_values = [1, 0.95, 0.90, 0.85, 0.8, 0.75, 0.7, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30]
 
-// 	input:
-// 	tuple file(rcorrected_read_one), file(rcorrected_read_two_pe) from ch_bbmap_gc_investigation_input
-// 	each qual_val from quality_values
+process bbmap_gc_investigation{
+	tag "${fastq_gz_to_map}_$qual_val"
+	conda "envs/stage_two.yaml"
+	// I have set the CPUs here but will not limit the threads in the actual
+	// command. This should be a good balance between still making use of as many threads
+	// as possible but not having innefficient load distribution across the threads
+	// i.e. spending most of the cpu time in the kernel.
+	cpus params.bbmap_gc_investigation_threads
+	publishDir path: "gc_lutea_maping"
 
-// 	output:
-// 	tuple file("*.log.txt"), file("*.gchist.txt"), file("*.gc_content_hist_unmapped.txt"), file("*.gc_content_hist_mapped.txt") into ch_mapped_unmapped_output
+	input:
+	file fastq_gz_to_map from ch_pe_bbmap_gc_investigation_input.toList().mix(ch_mp_bbmap_gc_investigation_input.toList()).flatten()
+	each qual_val from quality_values
 
-// 	script:
-// 	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
-// 	seq_sample_basename = rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
-// 	"""
-// 	# First run bbmap.sh to produce the mappe and unmapped fastqs
-// 	# By defualt, a pair that have one read mapped and one unmapped will be put into the mapped file (i.e. it is conservative). We will not change this default.
-// 	if [[ $seq_sample_basename == *"M_17"* ]]; then
-//   		bbmap.sh in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000
-// 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
-// 		bbmap.sh rcs=f in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000
-// 	fi
-// 	# get the gc historgram files for the mapped
-// 	stats.sh in=${seq_sample_basename}.mapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_mapped.txt gcbins=1000
-// 	# get the gc historgram files for the unmapped
-// 	stats.sh in=${seq_sample_basename}.unmapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_unmapped.txt gcbins=1000
-// 	# then remove the large datafiles
-// 	rm ${seq_sample_basename}.unmapped.fastq
-// 	rm ${seq_sample_basename}.mapped.fastq
-// 	# The output that we need is not written to stdout but rather to the .command.log file output by nextflow
-// 	# We will attempt to rename this and extract it to the outputs
-// 	cp .command.log ${seq_sample_basename}.${qual_val}.log.txt
-// 	"""
-// }
+	output:
+	tuple file("*.log.txt"), file("*.gchist.txt"), file("*.gc_content_hist_unmapped.txt"), file("*.gc_content_hist_mapped.txt") into ch_mapped_unmapped_output
+
+	script:
+	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
+	seq_sample_basename = fastq_gz_to_map.getName().replaceAll(".fastq.gz", "")
+	"""
+	# First run bbmap.sh to produce the mapped and unmapped fastqs
+	# By defualt, a pair that have one read mapped and one unmapped will be put into the mapped file (i.e. it is conservative). We will not change this default.
+	# Because we have already run nxtrim on the mp libraries it has already changed RF orientation to FR so we don't have to worry about the rcs=f
+	# Because we have no merged some of the pe reads, this makes some of the reads longer than the maximum size of 600 that bbmap.sh allows.
+	# We can use the option maxlen=600 to break up the longer sequences into chuncks. It seems that the chunks are put pack together in the out put as the
+	# average length of the mapped and unmapped are almost identical to the input sequences. As are the standard deviations.
+	# We should not that for the single (i.e. non paired) reads (e.g. the merged reads) the log file does not contain insert data length so we will have to work this out on the command line.
+	# I will use a cool awk command to calculate this and put it into len_info.txt files. This will give us average and stdev of the seq lengths. (Acutally, we will only need this info when we do the actual mapping)
+	
+  	bbmap.sh in=$fastq_gz_to_map ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000 maxlen=600
+	# get the gc historgram files for the mapped
+	stats.sh in=${seq_sample_basename}.mapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_mapped.txt gcbins=1000
+	# get the gc historgram files for the unmapped
+	stats.sh in=${seq_sample_basename}.unmapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_unmapped.txt gcbins=1000
+	# then remove the large datafiles
+	rm ${seq_sample_basename}.unmapped.fastq
+	rm ${seq_sample_basename}.mapped.fastq
+	# The output that we need is not written to stdout but rather to the .command.log file output by nextflow
+	# We will attempt to rename this and extract it to the outputs
+	cp .command.log ${seq_sample_basename}.${qual_val}.log.txt
+	"""
+}
+
+
 
 // process bbmap_gc_supp_figure{
 // 	tag "${gc_content_hist_mapped.getName().replaceAll(".gc_content_hist_mapped.txt", "")}"
@@ -331,125 +338,43 @@ process rcorrector{
 // 	"""
 // }
 
-// mapp the error corrected reads to the lutea genome using the predetermined minratio scores.
-// These were determined from the bbmap_gc_investigation process above
-process bbmap_filter_lutea{
-	tag "${rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}"
-	conda "envs/stage_two.yaml"
-	// I have set the CPUs here but will not limit the threads in the actual
-	// command. This should be a good balance between still making use of as many threads
-	// as possible but not having innefficient load distribution across the threads
-	// i.e. spending most of the cpu time in the kernel.
-	cpus params.bbmap_lutea_threads
+// ch_pe_bbmap_gc_investigation_input.toList().mix(ch_mp_bbmap_gc_investigation_input.toList()).flatten().view()
 
-	input:
-	tuple file(rcorrected_read_one), file(rcorrected_read_two_pe) from ch_bbmap_filter_lutea_input
+// // mapp the error corrected reads to the lutea genome using the predetermined minratio scores.
+// // These were determined from the bbmap_gc_investigation process above
+// process bbmap_filter_lutea{
+// 	tag "${rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}"
+// 	conda "envs/stage_two.yaml"
+// 	// I have set the CPUs here but will not limit the threads in the actual
+// 	// command. This should be a good balance between still making use of as many threads
+// 	// as possible but not having innefficient load distribution across the threads
+// 	// i.e. spending most of the cpu time in the kernel.
+// 	cpus params.bbmap_lutea_threads
 
-	output:
-	file "*.unmapped.fastq.gz" into ch_bbmerge_input, ch_nxtrim_input
+// 	input:
+// 	tuple file(rcorrected_read_one), file(rcorrected_read_two_pe) from ch_bbmap_filter_lutea_input
 
-	script:
-	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
-	seq_sample_basename = rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
-	"""
-	if [[ $seq_sample_basename == *"M_17"* ]]; then
-  		bbmap.sh in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.85 k=14  maxsites=1
-	elif [[ $seq_sample_basename == *"M_18"* ]]; then
-		bbmap.sh rcs=f in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.60 k=14  maxsites=1
-	fi
-	"""
-}
+// 	output:
+// 	file "*.unmapped.fastq.gz" into ch_bbmap_filter_lutea_output
+
+// 	script:
+// 	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
+// 	seq_sample_basename = rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
+// 	"""
+// 	if [[ $seq_sample_basename == *"M_17"* ]]; then
+//   		bbmap.sh in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.85 k=14  maxsites=1
+// 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
+// 		bbmap.sh rcs=f in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.60 k=14  maxsites=1
+// 	fi
+// 	"""
+// }
 
 
-// The paired end reads will go into BBMerge, to merge as many as possible
-process bbMerge{
-	tag "$unmapped_fastq"
-	conda "envs/general_conda_env.yaml"
-	// I have set the CPUs here but will not limit the threads in the actual
-	// command. This should be a good balance between still making use of as many threads
-	// as possible but not having innefficient load distribution across the threads
-	// i.e. spending most of the cpu time in the kernel.
-	cpus params.bbmerge_threads
-	input:
-	// Importantly we only want the paried end reads here so the M_17 files
-	file unmapped_fastq from ch_bbmerge_input.toList().flatMap{
-		
-		// Create the new list to return
-		List output_list = new ArrayList();
-		// for each tuple in the list
-		for (i=0; i<(it.size()); i++){
-			if (it[i].getName().contains("M_17")){
-				// Then this is an mp tuple
-				// add it to the output_list
-				// println("Tuple ${it[i]} contains M_17 so is an mp item. Adding to the output list")
-				output_list.add(it[i])
-				// println("Output list now contains ${output_list}")
-			}// }else{
-			// 	// Then this should be a pe tuple
-			// 	// println("Tuple ${it[i]} does not contain M_17 so is a pe item.")
-			// }
-		}
-		// println("We have finished iterating through the channel and are ready to output")
-		// println("output list looks like this:")
-		// println("${output_list}")
-		return output_list
-    }
 
-	output:
-	tuple file("*.merged.fastq.gz"), file("*.unmerged.fastq.gz") into ch_bbmerge_out
-	file "*ihist.txt" into ch_bbmerge_ihist_out
 
-	script:
-	out_merged_name = unmapped_fastq.getName().replaceAll(".fastq.gz", ".merged.fastq.gz")
-	unmerged_name = unmapped_fastq.getName().replaceAll(".fastq.gz", ".unmerged.fastq.gz")
-	ihist_name = unmapped_fastq.getName().replaceAll(".fastq.gz", ".ihist.txt")
-	"""
-	bbmerge-auto.sh in=$unmapped_fastq out=$out_merged_name outu=$unmerged_name ihist=$ihist_name ecct extend2=20 iterations=5
-	"""
-}
+// ch_bbmerge_out.toList().view()
+// ch_nxtrim_output.toList().view()
 
-// The mate pair reads will go into NXtrim to characterise them
-
-process nxtrim{
-	tag "$unmapped_fastq_gz"
-	conda "envs/nxtrim_and_pigz.yaml"
-
-	input:
-	// Importantly we only want the mate pair reads here so the M_18 files
-	file unmapped_fastq_gz from ch_nxtrim_input.toList().flatMap{
-		// Create the new list to return
-		List output_list = new ArrayList();
-		// for each tuple in the list
-		for (i=0; i<(it.size()); i++){
-			if (it[i].getName().contains("M_18")){
-				output_list.add(it[i])
-			}
-		}
-		return output_list
-    }
-
-	output:
-	tuple file("*mp.fastq.gz"), file("*pe.fastq.gz"), file("*se.fastq.gz"), file("*unknown.fastq.gz") into ch_nxtrim_output
-
-	script:
-	sample_name_out = unmapped_fastq_gz.getName().replaceAll(".unmapped.fastq.gz", "")
-	unmapped_fastq = unmapped_fastq_gz.getName().replaceAll(".gz", "")
-	sample_name_fwd_uncomp = "${sample_name_out}_1.fastq"
-	sample_name_rev_uncomp = "${sample_name_out}_2.fastq"
-	sample_name_fwd_comp = "${sample_name_out}_1.fastq.gz"
-	sample_name_rev_comp = "${sample_name_out}_2.fastq.gz"
-	// We need to have paired reads here rather than the single interleaved fastq that we get
-	// from the bbmap. We will use the deinterleave_fastq.sh in bin to unpair the reads
-	"""
-	# First decompress and deinterleave the fastq.gz file
-	gzip -df $unmapped_fastq_gz
-	python3 ${params.bin_dir}/deinterleave_paired_seq_fastq.py $unmapped_fastq $sample_name_fwd_uncomp $sample_name_rev_uncomp
-	# now compress the files
-	gzip $sample_name_fwd_uncomp $sample_name_rev_uncomp
-	# Now put the paired files into nxtrim. We want output to be compressed
-	nxtrim -1 $sample_name_fwd_comp -2 $sample_name_rev_comp -O $sample_name_out
-	"""
-}
 
 // So that we don't lose the ability to use the resume option in nextflow, we will start another conda environment here
 // We'll call it stage_two.yaml.
