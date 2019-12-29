@@ -100,7 +100,7 @@ if (params.sub_sample){
 		// The directory for the sub_sampled raw reads to be output
 		println("WE FOT HERE")
 		Channel.fromPath(["${params.pe_dir_sub_raw_reads}/*.fastq.gz", "${params.mp_dir_sub_raw_reads}/*.fastq.gz"]).set{ch_fastqc_pre_trim_input}
-		Channel.fromFilePairs(["${params.pe_dir_sub_raw_reads}/*{R1_sub,R2_sub}.fastq.gz", "${params.mp_dir_sub_raw_reads}/*{R1,R2}.fastq.gz"]).into{ch_trim_reads_input; ch_test}
+		Channel.fromFilePairs(["${params.pe_dir_sub_raw_reads}/*{R1_sub,R2_sub}.fastq.gz", "${params.mp_dir_sub_raw_reads}/*{R1_sub,R2_sub}.fastq.gz"]).into{ch_trim_reads_input; ch_test}
 	}
 	
 }else{
@@ -134,10 +134,13 @@ process trim_reads{
 	script:
 	// We will modify the name thusly, so that regardless of whether we started with subsampling
 	// the names will be inagreement.
-	outbase = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.fq.gz')
+	paired_out_one = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.1P.fq.gz')
+	unpaired_out_one = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.1U.fq.gz')
+	paired_out_two = reads[1].getName().replaceAll("_sub", "").replaceAll('_R2.fastq.gz', '.trimmed.2P.fq.gz')
+	unpaired_out_two = reads[1].getName().replaceAll("_sub", "").replaceAll('_R2.fastq.gz', '.trimmed.2U.fq.gz')
 	"""
-	trimmomatic PE -threads ${params.trimmomatic_threads} -basein ${reads[0]} \\
-		-baseout $outbase \\
+	trimmomatic PE -threads ${params.trimmomatic_threads} ${reads[0]} ${reads[0]} \\
+		$paired_out_one $unpaired_out_one $paired_out_two $unpaired_out_two\\
 		ILLUMINACLIP:${params.tru_seq_pe_fasta_path}:2:30:10:2:keepBothReads \\
 		LEADING:3 TRAILING:3 MINLEN:36 HEADCROP:11
 	"""
@@ -529,24 +532,30 @@ process map_pe_against_lutea_unmerged{
 // 	"""
 // }
 
-// process discovar_assembly{
-// tag "Discovar_assembly"
-// conda "envs/stage_one.yaml"
+if (params.sub_sample){
+	discovar_publish_path = "${params.pe_wkd}/raw_reads/${params.sub_sample_depth}_discovar_assembly"
+}else{
+	discovar_publish_path = "${params.pe_wkd}/discovardenovo_assembly"
+}
 
-// input: 
-// tuple file(unaligned_paired_bam_one), file(unaligned_paired_bam_two) from ch_discovar_assembly_input.toList()
+process discovar_assembly{
+tag "Discovar_assembly"
+conda "envs/stage_one.yaml"
+publishDir path: discovar_publish_path
+input: 
+tuple file(unaligned_paired_bam_one), file(unaligned_paired_bam_two) from ch_discovar_assembly_input.toList()
 
-// output:
-// file "*.discovar_out" into ch_discovar_out
+output:
+// We will keep the output a.lines.fasta to do our insert map against
+tuple file("**/stats"), file("**/a.lines.fasta") into ch_discovar_out
 
-// script:
-// 	"""
-// 	mkdir output
-// 	mkdir temp
+script:
+	"""
+	mkdir output
 	
-// 	Discovar READS=${unaligned_paired_bam_one},${unaligned_paired_bam_two} REGIONS=all TMP=\${PWD}/temp OUT_HEAD=\${PWD}/output/
-// 	"""
-// }
+	DiscovarDeNovo READS=${unaligned_paired_bam_one},${unaligned_paired_bam_two} OUT_DIR=\${PWD}/output/
+	"""
+}
 
 // 
 // ch_bbmerge_out.toList().view()
