@@ -19,3 +19,5 @@ mate_pair_libs_sub
 paired_end_reads_sub
 gc_lutea_maping
 plutea_reference_genome
+gc_lutea_maping_unmapped
+.vscode/

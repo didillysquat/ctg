@@ -208,7 +208,7 @@ process bbMerge{
     }
 
 	output:
-	tuple file("*.merged.fastq.gz"), file("*.unmerged.fastq.gz") into ch_pe_bbmap_filter_lutea_input, ch_pe_bbmap_gc_investigation_input
+	tuple file("*.merged.fastq.gz"), file("*.unmerged.fastq.gz") into ch_pe_bbmap_filter_lutea_input, ch_pe_bbmap_gc_investigation_input, ch_pe_bbmap_gc_investigation_overall_input
 	file "*ihist.txt" into ch_bbmerge_ihist_out
 
 	script:
@@ -241,7 +241,7 @@ process nxtrim{
     }	
 
 	output:
-	tuple file("*mp.fastq.gz"), file("*pe.fastq.gz"), file("*se.fastq.gz"), file("*unknown.fastq.gz") into ch_mp_bbmap_filter_lutea_input, ch_mp_bbmap_gc_investigation_input
+	tuple file("*mp.fastq.gz"), file("*pe.fastq.gz"), file("*se.fastq.gz"), file("*unknown.fastq.gz") into ch_mp_bbmap_filter_lutea_input, ch_mp_bbmap_gc_investigation_input, ch_mp_bbmap_gc_investigation_overall_input
 
 	script:
 	sample_name_out = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", "")
@@ -269,12 +269,14 @@ process nxtrim{
 // This can be a figure in the paper.
 
 // The command for getting average length and stdev: awk 'BEGIN { t=0.0;sq=0.0; n=0;} ;NR%4==2 {n++;L=length($0);t+=L;sq+=L*L;}END{m=t/n;printf("total %d avg=%f stddev=%f\n",n,m,sqrt(sq/n-m*m));}' *.fastq
-
+// NB we were having some problems with the new line character in the above awk command so we removed it.
 // The results are very interesting. They show that the pe reads should probably have a higher
 // minratio than the mp reads. For the pe a ratio of 0.85 looks like it would be good
 // For the mp much lower i.e. 0.6 looks like it would be appropriate.
 quality_values = [1, 0.95, 0.90, 0.85, 0.8, 0.75, 0.7, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30]
 
+//TODO the gc values that are being output are really quite crap.
+// I will calculate them by hand using some more awesome awk and then we can replot
 process bbmap_gc_investigation{
 	tag "${fastq_gz_to_map}_$qual_val"
 	conda "envs/stage_two.yaml"
@@ -290,7 +292,7 @@ process bbmap_gc_investigation{
 	each qual_val from quality_values
 
 	output:
-	tuple file("*.log.txt"), file("*.gchist.txt"), file("*.gc_content_hist_unmapped.txt"), file("*.gc_content_hist_mapped.txt") into ch_mapped_unmapped_output
+	tuple file("*.log.txt"), file("*.gchist.txt"), file("*.unmapped.awk_gc.txt"), file("*.mapped.awk_gc.txt") into ch_mapped_unmapped_output
 
 	script:
 	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
@@ -306,11 +308,9 @@ process bbmap_gc_investigation{
 	# I will use a cool awk command to calculate this and put it into len_info.txt files. This will give us average and stdev of the seq lengths. (Acutally, we will only need this info when we do the actual mapping)
 	
   	bbmap.sh in=$fastq_gz_to_map ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=$qual_val k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000 maxlen=600
-	# get the gc historgram files for the mapped
-	stats.sh in=${seq_sample_basename}.mapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_mapped.txt gcbins=1000
-	# get the gc historgram files for the unmapped
-	stats.sh in=${seq_sample_basename}.unmapped.fastq gchist=${seq_sample_basename}.${qual_val}.gc_content_hist_unmapped.txt gcbins=1000
 	# then remove the large datafiles
+	awk '(NR%4==2) {N1+=length(\$0);gsub(/[AT]/,"");N2+=length(\$0);}END{print N2/N1;}' ${seq_sample_basename}.unmapped.fastq > ${seq_sample_basename}.${qual_val}.unmapped.awk_gc.txt
+	awk '(NR%4==2) {N1+=length(\$0);gsub(/[AT]/,"");N2+=length(\$0);}END{print N2/N1;}' ${seq_sample_basename}.mapped.fastq > ${seq_sample_basename}.${qual_val}.mapped.awk_gc.txt
 	rm ${seq_sample_basename}.unmapped.fastq
 	rm ${seq_sample_basename}.mapped.fastq
 	# The output that we need is not written to stdout but rather to the .command.log file output by nextflow
@@ -319,8 +319,44 @@ process bbmap_gc_investigation{
 	"""
 }
 
+// The above process still does not do an awk calculation of the overall gc value of the inital reads that go into bbmap. We will only need to do this once per
+// library. As I have already done the above process I will calculate this in a seperate process
+process get_overall_gc_of_libs{
+	tag "${fastq_gz_to_map}"
+	conda "envs/stage_two.yaml"
+	// I have set the CPUs here but will not limit the threads in the actual
+	// command. This should be a good balance between still making use of as many threads
+	// as possible but not having innefficient load distribution across the threads
+	// i.e. spending most of the cpu time in the kernel.
+	cpus params.bbmap_gc_investigation_threads
+	publishDir path: "gc_lutea_maping"
 
+	input:
+	file fastq_gz_to_map from ch_pe_bbmap_gc_investigation_overall_input.toList().mix(ch_mp_bbmap_gc_investigation_overall_input.toList()).flatten()
+	
+	output:
+	file "*.all.awk_gc.txt" into ch_get_overall_gc_of_libs_output
 
+	script:
+	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
+	seq_sample_basename = fastq_gz_to_map.getName().replaceAll(".fastq.gz", "")
+	"""
+	# First run bbmap.sh to produce the mapped and unmapped fastqs
+	# By defualt, a pair that have one read mapped and one unmapped will be put into the mapped file (i.e. it is conservative). We will not change this default.
+	# Because we have already run nxtrim on the mp libraries it has already changed RF orientation to FR so we don't have to worry about the rcs=f
+	# Because we have no merged some of the pe reads, this makes some of the reads longer than the maximum size of 600 that bbmap.sh allows.
+	# We can use the option maxlen=600 to break up the longer sequences into chuncks. It seems that the chunks are put pack together in the out put as the
+	# average length of the mapped and unmapped are almost identical to the input sequences. As are the standard deviations.
+	# We should not that for the single (i.e. non paired) reads (e.g. the merged reads) the log file does not contain insert data length so we will have to work this out on the command line.
+	# I will use a cool awk command to calculate this and put it into len_info.txt files. This will give us average and stdev of the seq lengths. (Acutally, we will only need this info when we do the actual mapping)
+	
+  	gzip -df $fastq_gz_to_map
+	awk '(NR%4==2) {N1+=length(\$0);gsub(/[AT]/,"");N2+=length(\$0);}END{print N2/N1;}' ${seq_sample_basename}.fastq > ${seq_sample_basename}.all.awk_gc.txt
+	rm ${seq_sample_basename}.fastq
+	"""
+}
+
+// In theory we should just be able to flatten this.
 // process bbmap_gc_supp_figure{
 // 	tag "${gc_content_hist_mapped.getName().replaceAll(".gc_content_hist_mapped.txt", "")}"
 // 	conda "envs/standard_python.yaml"
@@ -340,36 +376,66 @@ process bbmap_gc_investigation{
 
 // ch_pe_bbmap_gc_investigation_input.toList().mix(ch_mp_bbmap_gc_investigation_input.toList()).flatten().view()
 
-// // mapp the error corrected reads to the lutea genome using the predetermined minratio scores.
-// // These were determined from the bbmap_gc_investigation process above
-// process bbmap_filter_lutea{
-// 	tag "${rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")}"
-// 	conda "envs/stage_two.yaml"
-// 	// I have set the CPUs here but will not limit the threads in the actual
-// 	// command. This should be a good balance between still making use of as many threads
-// 	// as possible but not having innefficient load distribution across the threads
-// 	// i.e. spending most of the cpu time in the kernel.
-// 	cpus params.bbmap_lutea_threads
+// mapp the error corrected reads to the lutea genome using the predetermined minratio scores.
+// These were determined from the bbmap_gc_investigation process above
+// Above we were running the gc mapping investigation process once for every type and every library.
+// From, this we have predetermined minratios for each of the types of library to perform the mapping with.
+// Here we will also run once per type and library as we don't need to keep the sets togheter.
+// I.e. it doesn't matter if we don't have the pe, mp, se and unknowns in tuple,
+// we can just run them all seperately and derive which library they are from in the next
+// python script for making the data inputs to the AllPathsLG assembler.
+process bbmap_filter_lutea{
+	tag "${fastq_gz_to_map}"
+	conda "envs/stage_two.yaml"
+	// I have set the CPUs here but will not limit the threads in the actual
+	// command. This should be a good balance between still making use of as many threads
+	// as possible but not having innefficient load distribution across the threads
+	// i.e. spending most of the cpu time in the kernel.
+	cpus params.bbmap_lutea_threads
+	publishDir path: "gc_lutea_maping_unmapped"
+	input:
+	file fastq_gz_to_map from ch_pe_bbmap_filter_lutea_input.toList().mix(ch_mp_bbmap_filter_lutea_input.toList()).flatten()
 
-// 	input:
-// 	tuple file(rcorrected_read_one), file(rcorrected_read_two_pe) from ch_bbmap_filter_lutea_input
+	output:
+	//From this output we will need the unmapped seq file so that we can get the name from that
+	// We will also want to have either:
+	// a) the mean length of the fragment and the standard deviation of this (for the non-matepair reads), or
+	// b) the mean insert length and the standard deviation of this.
+	// We will get the insert length and standard deviation hopefully from the log file output
+	// Acutally only the mean length was available from the log file.
+	// So rather we will output the ihist file for the matepair mapping.
+	// This will allow us to calcuate mean and stdevs.
+	// We will generate the men length and stdev info using the awk command shown below and be sure to collect
+	// this output.
+	// We will not output the mapped reads.
+	// I think it will actually be worth having a look at the insert lengths for all of the paired sequences so I will add this in below.
+	tuple file("*.unmapped.fastq"), file("*.unmapped.len_info.txt"), file("*.ihist.txt") optional true into ch_bbmap_filter_lutea_output
 
-// 	output:
-// 	file "*.unmapped.fastq.gz" into ch_bbmap_filter_lutea_output
+	script:
+	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
+	seq_sample_basename = fastq_gz_to_map.getName().replaceAll(".fastq.gz", "")
+	"""
+	
+	if [[ $seq_sample_basename == *".merged"* ]]; then
+	# Then we need to run with the maxlen=600 because these are longer due to being merged
+  		bbmap.sh in=$fastq_gz_to_map ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=0.6 k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000 maxlen=600
+	elif [[ $seq_sample_basename == *".mp"* ]] || [[ $seq_sample_basename == *"unknown"* ]]; then
+		# Then these are matepair and we need to know the mean and stdev of the insert size.
+		# We get these out of ihist.
+		bbmap.sh in=$fastq_gz_to_map ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=0.6 k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000 ihist=${seq_sample_basename}.mapped.ihist.txt
+	elif [[ $seq_sample_basename == *".se"* ]]; then
+		# Then this is the single end and we will not require the ihist
+		bbmap.sh in=$fastq_gz_to_map ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=0.6 k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000
+	else
+		# This for all other sequencing types that will be paired. We will require the ihist file for all of these.
+		bbmap.sh in=$fastq_gz_to_map ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.fastq nodisk printunmappedcount minratio=0.6 k=14 gchist=${seq_sample_basename}.gchist.txt maxsites=1 gcbins=1000 ihist=${seq_sample_basename}.mapped.ihist.txt
+	fi
+	awk 'BEGIN { t=0.0;sq=0.0; n=0;} ;NR%4==2 {n++;L=length(\$0);t+=L;sq+=L*L;}END{m=t/n;printf("total %d avg=%f stddev=%f",n,m,sqrt(sq/n-m*m));}' ${seq_sample_basename}.unmapped.fastq > ${seq_sample_basename}.unmapped.len_info.txt
+	"""
+}
 
-// 	script:
-// 	// This is very useful: https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/bbmap-guide/
-// 	seq_sample_basename = rcorrected_read_one.getName().replaceAll(".trimmed_1P.cor.fq.gz", "")
-// 	"""
-// 	if [[ $seq_sample_basename == *"M_17"* ]]; then
-//   		bbmap.sh in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.85 k=14  maxsites=1
-// 	elif [[ $seq_sample_basename == *"M_18"* ]]; then
-// 		bbmap.sh rcs=f in=$rcorrected_read_one in2=$rcorrected_read_two_pe ref=${params.lutea_ref_genome_path} outm=${seq_sample_basename}.mapped.fastq.gz outu=${seq_sample_basename}.unmapped.fastq.gz nodisk printunmappedcount minratio=0.60 k=14  maxsites=1
-// 	fi
-// 	"""
-// }
-
-
+// TODO I think its probably worth putting in a discovar assembly using only the unmapped short reads and then doing the bbmap to this to get the insert lengths
+// We can then compare these to the insert length estimates using the lutea genome.
 
 
 // ch_bbmerge_out.toList().view()
