@@ -63,12 +63,12 @@ class GenerateAllPathsLGDataInputCSVs:
                 else:
                     lane1_lane2 = 'lane2'
                 # Then we are working with lane 1
-                if 'merged' in seq_file:
-                    merged_unmerged = 'merged'
-                    paired = '0'
-                else:
+                if '.unmerged.' in seq_file:
                     merged_unmerged = 'unmerged'
                     paired = '1'
+                else:
+                    merged_unmerged = 'merged'
+                    paired = '0'
                     
                 # Then we are working with the merged file
                 group_name = f'{pe_mp}_{lane1_lane2}_{merged_unmerged}'
@@ -82,6 +82,28 @@ class GenerateAllPathsLGDataInputCSVs:
 
                 self.in_groups_stream.write(f'{group_name},{library_name},{seq_file}\n')
                 self.in_libs_stream.write(f'{library_name},ct_genome,C.thermophilum,fragment,{paired},{mean_fragment_len},{stdev_fragment_len},,,inward,,\n')
+                if '.unmerged.' in seq_file:
+                    # This is purely out of interest. I want to investigate what the insert lengths of the other paired
+                    # libraries look like
+                    if os.path.isfile(f'{seq_file.replace(".unmapped.fastq", ".mapped.ihist.txt")}'):
+                        with open(f'{seq_file.replace(".unmapped.fastq", ".mapped.ihist.txt")}', 'r') as f:
+                            lines = [line.rstrip().split() for line in f]
+                        # Use this df later for plotting a histogram
+                        df = pd.DataFrame(lines[6:], columns=lines[5]).astype(int)
+                        # Here we have a pandas hopefully with two columns
+                        # Bin in the first and frequency in the second column.
+
+                        fyi_mean_insert_len = int(float(lines[0][1]))
+                        fyi_stdev_insert_len = int(float(lines[3][1]))
+                        fyi_mode_insert_len = int(float(lines[2][1]))
+                        print(
+                            f'{pe_mp}_{lane1_lane2}_{merged_unmerged}: mean_insert: {fyi_mean_insert_len}; stdev: {fyi_stdev_insert_len}')
+                        self.axarr[self.ax_count].plot(df.iloc[:, 0], df.iloc[:, 1])
+                        self.axarr[self.ax_count].set_title(
+                            f'{pe_mp}_{lane1_lane2}_{merged_unmerged}\nmean: {fyi_mean_insert_len}; mode: {fyi_mode_insert_len}',
+                            fontsize='x-small')
+                        self._set_xlim(self.axarr[self.ax_count], fyi_mode_insert_len)
+                        self.ax_count += 1
             else:
                 pe_mp = 'mp'
                 if '35-45' in seq_file:

@@ -1,0 +1,16 @@
+channels:
+  - bioconda
+dependencies:
+  - rcorrector
+  - trimmomatic
+  - fastqc
+  - seqtk
+  - bbmap
+  - nxtrim
+  - discovardenovo
+  - picard
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - samtools

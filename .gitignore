@@ -21,3 +21,9 @@ gc_lutea_maping
 plutea_reference_genome
 gc_lutea_maping_unmapped
 .vscode/
+gc_lutea_mapping/
+gc_lutea_mapping_investigation/ 
+gc_lutea_mapping_unmapped/ 
+gc_lutea_mapping_unmapped_bam/ 
+gc_lutea_mapping_unmapped_fastq_gz/ 
+gc_lutea_mapping_unmapped_sam/
