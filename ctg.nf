@@ -114,11 +114,11 @@ process trim_reads{
 	tag "${reads[0].getName()}"
 	conda "envs/stage_one.yaml"
 	
-	// I don't think we need to publish these
-	// publishDir = [
-	// 		[path: "${params.mp_wkd}/trimmed", mode: 'copy', overwrite: 'true', pattern: "M_18*"],
-	// 		[path: "${params.pe_wkd}/trimmed", mode: 'copy', overwrite: 'true', pattern: "M_17*"]
-	// 	]
+	// These represent a considerable investment in time and so we should publish
+	publishDir = [
+			[path: "${params.mp_wkd}/trimmed", mode: 'copy', overwrite: 'true', pattern: "M_18*"],
+			[path: "${params.pe_wkd}/trimmed", mode: 'copy', overwrite: 'true', pattern: "M_17*"]
+		]
 
 	input:
 	tuple val(base), file(reads) from ch_trim_reads_input
@@ -198,6 +198,12 @@ process rcorrector{
 	tag "${trimmed_read_one}"
 	conda "envs/stage_one.yaml"
 	cpus params.rcorrector_threads
+
+	// These represent a considerable investment in time and so we should publish
+	publishDir = [
+			[path: "${params.mp_wkd}/error_corrected", mode: 'copy', overwrite: 'true', pattern: "M_18*"],
+			[path: "${params.pe_wkd}/error_corrected", mode: 'copy', overwrite: 'true', pattern: "M_17*"]
+		]
 
 	input:
 	tuple file(trimmed_read_one), file(trimmed_read_two) from ch_rcorrector_input
