@@ -1,5 +1,12 @@
 #!/usr/bin/env nextflow
 
+/* The cacheing system that nextflow ships with by default is great when it works but it is causing a lot
+of grief when it fails and this seems to happen quite often. Sometimes when looking at the dumped log files
+it is not even possible to tell what the different hashes are referring to. As such, we are going to build
+in a sort of caching to this nextflow doc. We will search to see if the files we need are already availale
+and then we will work the first point at which the files are not available. In this way we won't have to 
+worry about the cacheing mechanism failing. */
+
 // The git and base directory
 params.basedir = "/home/humebc/projects/st_genome"
 
@@ -26,6 +33,8 @@ params.pe_dir_sub = "${params.basedir}/paired_end_reads_sub"
 // If they do then we can start a channel by reading in the files from these locations
 // Else we will create them from scratch using the sub_sample_seqtk process below.
 if (params.sub_sample){
+	println("params.sub_sample is set to true")
+	println("checking to see if the subsampled sequnce files already exist")
 	params.mp_wkd = "${params.basedir}/mate_pair_libs_sub"
 	params.pe_wkd = "${params.basedir}/paired_end_reads_sub"
 	// Check to see if the directory already exists
@@ -37,11 +46,14 @@ if (params.sub_sample){
 		if ( mp_dir.list().size() == 12 && pe_dir.list().size() == 4){
 			// Then all the files are already here and so we can work from this dir
 			params.sub_sample_from_scratch = false
+			println("Successfully found subsampled seqs. We will not subsample from scratch")
 		}else{
 			params.sub_sample_from_scratch = true
+			println("Unsuccessful in finding subsampled seqs at a depth of ${params.sub_sample_depth}. We will subsample from scratch")
 		}
 	}else{
 		params.sub_sample_from_scratch = true
+		println("Unsuccessful in finding subsampled seqs at a depth of ${params.sub_sample_depth}. We will subsample from scratch")
 	}
 }else{
 	params.mp_wkd = "${params.basedir}/mate_pair_libs"
@@ -49,21 +61,41 @@ if (params.sub_sample){
 }
 
 // We will enable subsampling for development purposes.
-// We will subsample all of the sequencing reads down to 1 000 000 reads. 
+// We will subsample all of the sequencing reads down to the value that is set in the nextflow.config file reads. 
 
+// We will use a different set of output directories for publishing depending on whether
+// we are subsampling or not
 if (params.sub_sample){
-				
-
 	// The directory for the sub_sampled raw reads to be output
 	params.mp_dir_sub_raw_reads = "${params.mp_wkd}/raw_reads/${params.sub_sample_depth}" 	
 	params.pe_dir_sub_raw_reads = "${params.pe_wkd}/raw_reads/${params.sub_sample_depth}"
-	println("params.sub_sample_from_scratch is ${params.sub_sample_from_scratch}")
+	
+	// The directory for the sub_sampled rimmed reads to be output
+	params.mp_trimmed_reads_output_dir = "${params.mp_wkd}/trimmed_reads/${params.sub_sample_depth}" 	
+	params.pe_trimmed_reads_output_dir = "${params.pe_wkd}/trimmed_reads/${params.sub_sample_depth}"
+
+	// The directory for the corrected reads to be output
+	params.mp_corrected_reads_output_dir = "${params.mp_wkd}/corrected_reads/${params.sub_sample_depth}" 	
+	params.pe_corrected_reads_output_dir = "${params.pe_wkd}/corrected_reads/${params.sub_sample_depth}"
+}else{
+	// The directory for the trimmed reads to be output
+	// When we are not subsampling then we don't need to have a separate directory
+	// we just output the files directly into the trimmed read dir.
+	params.mp_trimmed_reads_output_dir = "${params.mp_wkd}/trimmed_reads" 	
+	params.pe_trimmed_reads_output_dir = "${params.pe_wkd}/trimmed_reads"
+
+	// The directory for the corrected reads to be output
+	params.mp_corrected_reads_output_dir = "${params.mp_wkd}/corrected_reads" 	
+	params.pe_corrected_reads_output_dir = "${params.pe_wkd}/corrected_reads"
+}
+
+
+if (params.sub_sample){	
 	if (params.sub_sample_from_scratch){
+		println("subsampling")
 		// The full size raw files that will be used as input to the seqtk
 		// We will put all of the sequencing files into a single channel
 		Channel.fromFilePairs(["${params.mp_dir}/raw_reads/*{R1,R2}.fastq.gz", "${params.pe_dir}/raw_reads/*{R1,R2}.fastq.gz"]).set{ch_sub_sample_seqtk_input}
-		
-		 	
 		
 		// Now do the subsampling using seqtk
 		// Once seqtk is complete then will need to do the gz compression
@@ -96,28 +128,53 @@ if (params.sub_sample){
 			"""
 		}
 	}else{
-		// Then we generate the required chanels directly from the already existing subsample directory
+		// Then we generate the required channels directly from the already existing subsample directory
 		// The directory for the sub_sampled raw reads to be output
-		println("WE FOT HERE")
+		println("populating channels from already existant subsampled reads")
 		Channel.fromPath(["${params.pe_dir_sub_raw_reads}/*.fastq.gz", "${params.mp_dir_sub_raw_reads}/*.fastq.gz"]).set{ch_fastqc_pre_trim_input}
 		Channel.fromFilePairs(["${params.pe_dir_sub_raw_reads}/*{R1_sub,R2_sub}.fastq.gz", "${params.mp_dir_sub_raw_reads}/*{R1_sub,R2_sub}.fastq.gz"]).into{ch_trim_reads_input; ch_test}
 	}
 	
 }else{
+	println("populating channels from already existant raw reads")
 	Channel.fromPath(["${params.pe_dir}/raw_reads/*.fastq.gz", "${params.mp_dir}/raw_reads/*.fastq.gz"]).set{ch_fastqc_pre_trim_input}
 	Channel.fromFilePairs(["${params.pe_dir}/raw_reads/*{R1,R2}.fastq.gz", "${params.mp_dir}/raw_reads/*{R1,R2}.fastq.gz"]).set{ch_trim_reads_input}
 }
 
 
 // Now trim the reads using trimmomatic
-process trim_reads{
+// TODO check to see if the trimmed reads already exist
+// If so, then scip the trimming and read in the trimmed reads directly from their containing directories.
+mp_dir_as_file = file(params.mp_trimmed_reads_output_dir)
+pe_dir_as_file = file(params.pe_trimmed_reads_output_dir)
+if ( mp_dir_as_file.exists() && pe_dir_as_file.exists() ){
+		// Then the directories that will hold the trimmed reads  already exist
+		// Check to see that they contain the correct number of reads
+		if ( mp_dir_as_file.list().size() == 24 && pe_dir_as_file.list().size() == 8){
+			// Then all the files are already here and so we can work from this dir
+			println("Successfully found trimmed seqs")
+			params.trim_from_scratch = false
+		}else{
+			println("Could not find trimmed seqs")
+			params.trim_from_scratch = true
+		}
+	}else{
+		println("Could not find trimmed seqs")
+		params.trim_from_scratch = true
+	}
+
+if (params.trim_from_scratch){
+	println("Starting trimming")
+
+	// Then we need to do the trimming and work from here.
+	process trim_reads{
 	tag "${reads[0].getName()}"
 	conda "envs/stage_one.yaml"
 	
 	// These represent a considerable investment in time and so we should publish
 	publishDir = [
-			[path: "${params.mp_wkd}/trimmed", mode: 'copy', overwrite: 'true', pattern: "M_18*"],
-			[path: "${params.pe_wkd}/trimmed", mode: 'copy', overwrite: 'true', pattern: "M_17*"]
+			[path: params.mp_trimmed_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_18*"],
+			[path: params.pe_trimmed_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_17*"]
 		]
 
 	input:
@@ -129,10 +186,10 @@ process trim_reads{
 	file "*.fq.gz" into ch_fastqc_post_trim_input
 	// Output that will be used for the error_correction
 	// This is a list of tuples that are the 1P and 2P output files only
-	tuple file("*1P.fq.gz"), file("*2P.fq.gz") into ch_rcorrector_input
+	tuple file("*1P.fq.gz"), file("*2P.fq.gz") into ch_tadpole_input
 
 	script:
-	// We will modify the name thusly, so that regardless of whether we started with subsampling
+	// We will modify the name so that regardless of whether we started with subsampling
 	// the names will be inagreement.
 	paired_out_one = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.1P.fq.gz')
 	unpaired_out_one = reads[0].getName().replaceAll("_sub", "").replaceAll('_R1.fastq.gz', '.trimmed.1U.fq.gz')
@@ -144,7 +201,21 @@ process trim_reads{
 		ILLUMINACLIP:${params.tru_seq_pe_fasta_path}:2:30:10:2:keepBothReads \\
 		LEADING:3 TRAILING:3 MINLEN:36 HEADCROP:11
 	"""
+	}	
+}else{
+	println("Populating channels from already trimmed files")
+	// Then the files have already been trimmed and we can create our channels directly from the directories
+
+	// First we need to read in all of the files that are in each of the directories, join the lists
+	// and then pass these into the ch_fastqc_post_trim_input list
+	Channel.fromPath(["${params.mp_trimmed_reads_output_dir}/*.fq.gz", "${params.pe_trimmed_reads_output_dir}/*.fq.gz"]).set{ch_fastqc_post_trim_input}
+
+	// Next we need to read in the paired files from each of the directories
+	// We can use the fromFilePairs method but we will then need to get rid of the val in each of the tuples.
+	// We can do this by using the map function as below
+	Channel.fromFilePairs(["${params.mp_trimmed_reads_output_dir}/*{1P,2P}.fq.gz", "${params.pe_trimmed_reads_output_dir}/*{1P,2P}.fq.gz"]).map{it[1]}.set{ch_tadpole_input}
 }
+
 
 if (params.make_fastqc){
 	// Now to the pre_trim fastqc for each of the subsampled fastq.gz files
@@ -190,30 +261,41 @@ if (params.make_fastqc){
 	}
 }
 
-
 // Now error correction
+// The paper we were following was using quake to do the error correcting but
+// this was a complete pain in the arse to get working and not available
+// via conda so we will go with the bbtools offering and try to use tadpole
+// TODO We will eventually want to check to see if the error correction has already been done
+// and work from the containing directories if they have.
+
 // The output here will be a little difficult because we need to separate the mp and pe
 // reads into seperate channels. We may need to write a mapping function for this
-process rcorrector{
+process tadpole{
 	tag "${trimmed_read_one}"
 	conda "envs/stage_one.yaml"
-	cpus params.rcorrector_threads
+	// todpole should try to use all cores by default so I have set the tadpole_treads to be 24
+	// so that nextflow will only try to run one at a time.
+	// I haven't explicitly limited this in the running of tadpole.
+	cpus params.tadpole_threads
 
 	// These represent a considerable investment in time and so we should publish
 	publishDir = [
-			[path: "${params.mp_wkd}/error_corrected", mode: 'copy', overwrite: 'true', pattern: "M_18*"],
-			[path: "${params.pe_wkd}/error_corrected", mode: 'copy', overwrite: 'true', pattern: "M_17*"]
+			[path: params.mp_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_18*"],
+			[path: params.pe_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_17*"]
 		]
 
 	input:
-	tuple file(trimmed_read_one), file(trimmed_read_two) from ch_rcorrector_input
+	tuple file(trimmed_read_one), file(trimmed_read_two) from ch_tadpole_input
 
 	output:
-	tuple file("*1P.cor.fq.gz"), file("*2P.cor.fq.gz") into ch_bbmerge_input, ch_nxtrim_input, ch_map_pe_against_lutea_unmerged_input
+	tuple file("*1P.cor.fastq.gz"), file("*2P.cor.fastq.gz") into ch_bbmerge_input, ch_nxtrim_input, ch_map_pe_against_lutea_unmerged_input
 
 	script:
+	output_one = trimmed_read_one.getName().replaceAll(".fq.gz", ".cor.fastq.gz")
+	output_two = trimmed_read_two.getName().replaceAll(".fq.gz", ".cor.fastq.gz")
+	
 	"""
-	run_rcorrector.pl -1 $trimmed_read_one -2 $trimmed_read_two -od . -t ${task.cpus}
+	tadpole.sh in=$trimmed_read_one in2=$trimmed_read_two out=$output_one out2=$output_two mode=correct
 	"""
 }
 
@@ -493,32 +575,33 @@ if (params.do_bbmap_lutea_gc_investigations){
 // Discovar takes in 250 length paired reads. As such, for the input to this we will need to work from before the bbmerge of the pe sequeneces
 // We will then need to run these against the lutea genome and then we can use this paired unmapped fastq as input to discovar
 
-process map_pe_against_lutea_unmerged{
-	tag "$error_corrected_fastq_gz_one"
-	conda "envs/stage_one.yaml"
-	publishDir path: "gc_lutea_mapping_unmapped_bam"
-	input:
-	tuple file(error_corrected_fastq_gz_one), file(error_corrected_fastq_gz_two) from ch_map_pe_against_lutea_unmerged_input.toList().flatMap{
-			// Create the new list to return
-			List output_list = new ArrayList();
-			// for each tuple in the list
-			for (i=0; i<(it.size()); i++){
-				if (it[i][0].getName().contains("M_17")){
-					output_list.add(it[i])
-				}
-			}
-			return output_list
-		}
+// // TODO 20200113 uncomment this
+// process map_pe_against_lutea_unmerged{
+// 	tag "$error_corrected_fastq_gz_one"
+// 	conda "envs/stage_one.yaml"
+// 	publishDir path: "gc_lutea_mapping_unmapped_bam"
+// 	input:
+// 	tuple file(error_corrected_fastq_gz_one), file(error_corrected_fastq_gz_two) from ch_map_pe_against_lutea_unmerged_input.toList().flatMap{
+// 			// Create the new list to return
+// 			List output_list = new ArrayList();
+// 			// for each tuple in the list
+// 			for (i=0; i<(it.size()); i++){
+// 				if (it[i][0].getName().contains("M_17")){
+// 					output_list.add(it[i])
+// 				}
+// 			}
+// 			return output_list
+// 		}
 	
-	output:
-	file "*unmapped.bam" into ch_discovar_assembly_input
+// 	output:
+// 	file "*unmapped.bam" into ch_discovar_assembly_input
 	
-	script:
-	seq_sample_basename = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", "")
-	"""
-	bbmap.sh in1=$error_corrected_fastq_gz_one in2=$error_corrected_fastq_gz_two ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.bam nodisk printunmappedcount minratio=0.6 k=14 maxsites=1
-	"""
-}
+// 	script:
+// 	seq_sample_basename = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", "")
+// 	"""
+// 	bbmap.sh in1=$error_corrected_fastq_gz_one in2=$error_corrected_fastq_gz_two ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.bam nodisk printunmappedcount minratio=0.6 k=14 maxsites=1
+// 	"""
+// }
 
 // process fastq_to_bam{
 // 	tag "$unmapped_fastq_gz"
@@ -538,30 +621,33 @@ process map_pe_against_lutea_unmerged{
 // 	"""
 // }
 
-if (params.sub_sample){
-	discovar_publish_path = "${params.pe_wkd}/raw_reads/${params.sub_sample_depth}_discovar_assembly"
-}else{
-	discovar_publish_path = "${params.pe_wkd}/discovardenovo_assembly"
-}
+// // TODO 20200113 uncomment this
+// if (params.sub_sample){
+// 	discovar_publish_path = "${params.pe_wkd}/raw_reads/${params.sub_sample_depth}_discovar_assembly"
+// }else{
+// 	discovar_publish_path = "${params.pe_wkd}/discovardenovo_assembly"
+// }
 
-process discovar_assembly{
-tag "Discovar_assembly"
-conda "envs/stage_one.yaml"
-publishDir path: discovar_publish_path
-input: 
-tuple file(unaligned_paired_bam_one), file(unaligned_paired_bam_two) from ch_discovar_assembly_input.toList()
+// process discovar_assembly{
+// tag "Discovar_assembly"
+// conda "envs/stage_one.yaml"
+// publishDir path: discovar_publish_path
+// input: 
+// tuple file(unaligned_paired_bam_one), file(unaligned_paired_bam_two) from ch_discovar_assembly_input.toList()
 
-output:
-// We will keep the output a.lines.fasta to do our insert map against
-tuple file("**/stats"), file("**/a.lines.fasta") into ch_discovar_out
+// output:
+// // We will keep the output a.lines.fasta to do our insert map against
+// tuple file("**/stats"), file("**/a.lines.fasta") into ch_discovar_out
 
-script:
-	"""
-	mkdir output
+// script:
+// 	"""
+// 	mkdir output
 	
-	DiscovarDeNovo READS=${unaligned_paired_bam_one},${unaligned_paired_bam_two} OUT_DIR=\${PWD}/output/
-	"""
-}
+// 	DiscovarDeNovo READS=${unaligned_paired_bam_one},${unaligned_paired_bam_two} OUT_DIR=\${PWD}/output/
+// 	"""
+// }
+
+
 
 // 
 // ch_bbmerge_out.toList().view()
