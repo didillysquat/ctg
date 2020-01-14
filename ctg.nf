@@ -74,9 +74,19 @@ if (params.sub_sample){
 	params.mp_trimmed_reads_output_dir = "${params.mp_wkd}/trimmed_reads/${params.sub_sample_depth}" 	
 	params.pe_trimmed_reads_output_dir = "${params.pe_wkd}/trimmed_reads/${params.sub_sample_depth}"
 
+	// NB that the error correction will probably fail if the subsampled reads are low as there
+	// is a required read depth required by tadpole.
 	// The directory for the corrected reads to be output
 	params.mp_corrected_reads_output_dir = "${params.mp_wkd}/corrected_reads/${params.sub_sample_depth}" 	
 	params.pe_corrected_reads_output_dir = "${params.pe_wkd}/corrected_reads/${params.sub_sample_depth}"
+
+	// The directory for the reads that are unmapped to lutea
+	params.mp_unmapped_to_lutea_reads_output_dir = "${params.mp_wkd}/unmapped_to_lutea_reads/${params.sub_sample_depth}"
+	params.pe_unmapped_to_lutea_reads_output_dir = "${params.pe_wkd}/unmapped_to_lutea_reads/${params.sub_sample_depth}"
+
+	// The directory for the discovar assembly output
+	discovar_publish_path = "${params.pe_wkd}/discovardenovo_assembly/${params.sub_sample_depth}"
+	
 }else{
 	// The directory for the trimmed reads to be output
 	// When we are not subsampling then we don't need to have a separate directory
@@ -87,6 +97,13 @@ if (params.sub_sample){
 	// The directory for the corrected reads to be output
 	params.mp_corrected_reads_output_dir = "${params.mp_wkd}/corrected_reads" 	
 	params.pe_corrected_reads_output_dir = "${params.pe_wkd}/corrected_reads"
+
+	// The directory for the reads that are unmapped to lutea
+	params.mp_unmapped_to_lutea_reads_output_dir = "${params.mp_wkd}/unmapped_to_lutea_reads"
+	params.pe_unmapped_to_lutea_reads_output_dir = "${params.pe_wkd}/unmapped_to_lutea_reads" 
+
+	// The directory for the discovar assembly output
+	discovar_publish_path = "${params.pe_wkd}/discovardenovo_assembly"
 }
 
 
@@ -267,39 +284,142 @@ if (params.make_fastqc){
 // via conda so we will go with the bbtools offering and try to use tadpole
 // TODO We will eventually want to check to see if the error correction has already been done
 // and work from the containing directories if they have.
+mp_dir_as_file = file(params.mp_corrected_reads_output_dir)
+pe_dir_as_file = file(params.pe_corrected_reads_output_dir)
+if ( mp_dir_as_file.exists() && pe_dir_as_file.exists() ){
+	if ( mp_dir_as_file.list().size() == 12 && pe_dir_as_file.list().size() == 4){
+			// Then all the files are already here and so we can work from this dir
+			println("Successfully found error corrected seqs")
+			params.correct_from_scratch = false
+		}else{
+			println("Could not find error corrected seqs")
+			params.correct_from_scratch = true
+		}
+}else{
+	println("Could not find error corrected seqs")
+			params.correct_from_scratch = true
+}
+if (params.correct_from_scratch){
+	// The output here will be a little difficult because we need to separate the mp and pe
+	// reads into seperate channels. We may need to write a mapping function for this
+	process tadpole{
+		tag "${trimmed_read_one}"
+		conda "envs/stage_one.yaml"
+		// todpole should try to use all cores by default so I have set the tadpole_treads to be 24
+		// so that nextflow will only try to run one at a time.
+		// I haven't explicitly limited this in the running of tadpole.
+		cpus params.tadpole_threads
 
-// The output here will be a little difficult because we need to separate the mp and pe
-// reads into seperate channels. We may need to write a mapping function for this
-process tadpole{
-	tag "${trimmed_read_one}"
+		// These represent a considerable investment in time and so we should publish
+		publishDir = [
+				[path: params.mp_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_18*"],
+				[path: params.pe_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_17*"]
+			]
+
+		input:
+		tuple file(trimmed_read_one), file(trimmed_read_two) from ch_tadpole_input
+
+		output:
+		tuple file("*1P.cor.fastq.gz"), file("*2P.cor.fastq.gz") into ch_bbmerge_input, ch_nxtrim_input, ch_map_against_lutea_input
+
+		script:
+		output_one = trimmed_read_one.getName().replaceAll(".fq.gz", ".cor.fastq.gz")
+		output_two = trimmed_read_two.getName().replaceAll(".fq.gz", ".cor.fastq.gz")
+		
+		"""
+		tadpole.sh in=$trimmed_read_one in2=$trimmed_read_two out=$output_one out2=$output_two mode=correct
+		"""
+	}
+}else{
+	println("Populating channels from already corrected files")
+	// Then the files have already been error corrected and we can create our channels directly from the directories
+
+	Channel.fromFilePairs(["${params.mp_corrected_reads_output_dir}/*{1P,2P}.cor.fastq.gz", "${params.pe_corrected_reads_output_dir}/*{1P,2P}.cor.fastq.gz"]).map{it[1]}.set{ch_map_against_lutea_input}
+}
+
+
+// Here we have error corrected reads for both the pe and mp.
+// We will now map both the mp and the pe reads against the lutea genome.
+// After that we will do two assemblies, one with tadpole and one with discovar using the unmapped short reads.
+// It may also be worth testing doing a normalised version of the reads at some point
+// using bbnorm and redoing the normalised reads.
+// First focus on just mapping to lutea and then discovar assembly.
+mp_dir_as_file = file(params.mp_corrected_reads_output_dir)
+pe_dir_as_file = file(params.pe_corrected_reads_output_dir)
+if ( mp_dir_as_file.exists() && pe_dir_as_file.exists() ){
+	if ( mp_dir_as_file.list().size() == 6 && pe_dir_as_file.list().size() == 2){
+			// Then all the files are already here and so we can work from this dir
+			println("Successfully found lutea unmapped seqs")
+			params.lutea_map_from_scratch = false
+		}else{
+			println("Could not find lutea unmapped seqs")
+			params.lutea_map_from_scratch = true
+		}
+}else{
+	println("Could not find lutea unmapped seqs")
+			params.correct_from_scratch = true
+}
+if (params.lutea_map_from_scratch){
+	
+	process map_against_lutea{
+	tag "$error_corrected_fastq_gz_one"
 	conda "envs/stage_one.yaml"
-	// todpole should try to use all cores by default so I have set the tadpole_treads to be 24
-	// so that nextflow will only try to run one at a time.
-	// I haven't explicitly limited this in the running of tadpole.
-	cpus params.tadpole_threads
-
+	// Similar to tadpole bbmap should use all available threads. As such I have set the bbmap_lutea_threads to 24
+	// But have not restricted the bbmap command. This way nextfow should only run one bbmap at a time
+	cpus params.bbmap_lutea_threads
 	// These represent a considerable investment in time and so we should publish
 	publishDir = [
-			[path: params.mp_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_18*"],
-			[path: params.pe_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_17*"]
+			[path: params.mp_unmapped_to_lutea_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_18*"],
+			[path: params.mp_unmapped_to_lutea_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_17*"]
 		]
-
 	input:
-	tuple file(trimmed_read_one), file(trimmed_read_two) from ch_tadpole_input
-
-	output:
-	tuple file("*1P.cor.fastq.gz"), file("*2P.cor.fastq.gz") into ch_bbmerge_input, ch_nxtrim_input, ch_map_pe_against_lutea_unmerged_input
-
-	script:
-	output_one = trimmed_read_one.getName().replaceAll(".fq.gz", ".cor.fastq.gz")
-	output_two = trimmed_read_two.getName().replaceAll(".fq.gz", ".cor.fastq.gz")
+	tuple file(error_corrected_fastq_gz_one), file(error_corrected_fastq_gz_two) from ch_map_against_lutea_input
 	
+	output:
+	file "*unmapped.bam" into ch_discovar_assembly_input
+	
+	script:
+	seq_sample_basename = error_corrected_fastq_gz_one.getName().replaceAll(".fastq.gz", "")
 	"""
-	tadpole.sh in=$trimmed_read_one in2=$trimmed_read_two out=$output_one out2=$output_two mode=correct
+	if [[ $seq_sample_basename == *"M_17"* ]]; then
+		echo processing base $seq_sample_basename with pe cutoff of 0.85
+		bbmap.sh in1=$error_corrected_fastq_gz_one in2=$error_corrected_fastq_gz_two ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.bam nodisk printunmappedcount minratio=0.85 k=14 maxsites=1
+	elif [[ $seq_sample_basename == *"M_18"* ]]; then
+		echo processing base $seq_sample_basename with mp cutoff of 0.60
+		bbmap.sh in1=$error_corrected_fastq_gz_one in2=$error_corrected_fastq_gz_two ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.bam nodisk printunmappedcount minratio=0.60 k=14 maxsites=1
+	fi
+	"""
+}
+}else{
+	println("Populating channels from already lutea unmapped files")
+	// Then the files have already been error corrected and we can create our channels directly from the directories
+
+	Channel.fromPath(["${params.mp_unmapped_to_lutea_reads_output_dir}/*.bam", "${params.pe_unmapped_to_lutea_reads_output_dir}/*.bam"]).set{ch_discovar_assembly_input}
+}
+
+// Here we have the unmapped bam files for both the mp and pe reads.
+// Here we will do a discovar assembly using on the pe reads. We will then use this assembly to map
+// reads to to get the ideas of insert lengths that we will eventually use for the LG_allpaths assembly
+
+
+process discovar_assembly{
+tag "Discovar_assembly"
+conda "envs/stage_one.yaml"
+publishDir path: discovar_publish_path
+input: 
+tuple file(unaligned_paired_bam_one), file(unaligned_paired_bam_two) from ch_discovar_assembly_input.toList()
+
+output:
+// We will keep the output a.lines.fasta to do our insert map against
+tuple file("**/stats"), file("**/a.lines.fasta") into ch_discovar_out
+
+script:
+	"""
+	mkdir output
+	DiscovarDeNovo READS=${unaligned_paired_bam_one},${unaligned_paired_bam_two} OUT_DIR=\${PWD}/output/
 	"""
 }
 
-// ch_mp_out.toList().view()
 
 
 // // After error correction we will want to split the channels up by paired end and mate pair
@@ -575,33 +695,7 @@ if (params.do_bbmap_lutea_gc_investigations){
 // Discovar takes in 250 length paired reads. As such, for the input to this we will need to work from before the bbmerge of the pe sequeneces
 // We will then need to run these against the lutea genome and then we can use this paired unmapped fastq as input to discovar
 
-// // TODO 20200113 uncomment this
-// process map_pe_against_lutea_unmerged{
-// 	tag "$error_corrected_fastq_gz_one"
-// 	conda "envs/stage_one.yaml"
-// 	publishDir path: "gc_lutea_mapping_unmapped_bam"
-// 	input:
-// 	tuple file(error_corrected_fastq_gz_one), file(error_corrected_fastq_gz_two) from ch_map_pe_against_lutea_unmerged_input.toList().flatMap{
-// 			// Create the new list to return
-// 			List output_list = new ArrayList();
-// 			// for each tuple in the list
-// 			for (i=0; i<(it.size()); i++){
-// 				if (it[i][0].getName().contains("M_17")){
-// 					output_list.add(it[i])
-// 				}
-// 			}
-// 			return output_list
-// 		}
-	
-// 	output:
-// 	file "*unmapped.bam" into ch_discovar_assembly_input
-	
-// 	script:
-// 	seq_sample_basename = error_corrected_fastq_gz_one.getName().replaceAll(".fq.gz", "")
-// 	"""
-// 	bbmap.sh in1=$error_corrected_fastq_gz_one in2=$error_corrected_fastq_gz_two ref=${params.lutea_ref_genome_path} outu=${seq_sample_basename}.unmapped.bam nodisk printunmappedcount minratio=0.6 k=14 maxsites=1
-// 	"""
-// }
+
 
 // process fastq_to_bam{
 // 	tag "$unmapped_fastq_gz"
@@ -621,31 +715,7 @@ if (params.do_bbmap_lutea_gc_investigations){
 // 	"""
 // }
 
-// // TODO 20200113 uncomment this
-// if (params.sub_sample){
-// 	discovar_publish_path = "${params.pe_wkd}/raw_reads/${params.sub_sample_depth}_discovar_assembly"
-// }else{
-// 	discovar_publish_path = "${params.pe_wkd}/discovardenovo_assembly"
-// }
 
-// process discovar_assembly{
-// tag "Discovar_assembly"
-// conda "envs/stage_one.yaml"
-// publishDir path: discovar_publish_path
-// input: 
-// tuple file(unaligned_paired_bam_one), file(unaligned_paired_bam_two) from ch_discovar_assembly_input.toList()
-
-// output:
-// // We will keep the output a.lines.fasta to do our insert map against
-// tuple file("**/stats"), file("**/a.lines.fasta") into ch_discovar_out
-
-// script:
-// 	"""
-// 	mkdir output
-	
-// 	DiscovarDeNovo READS=${unaligned_paired_bam_one},${unaligned_paired_bam_two} OUT_DIR=\${PWD}/output/
-// 	"""
-// }
 
 
 

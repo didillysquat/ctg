@@ -1,0 +1,63 @@
+(sonic) humebc@KW60289:~/projects/st_genome$ cd /home/humebc/projects/st_genome/ ; env PYTHONIOENCODING=UTF-8 PYTHONUNBUFFERED=1 /home/humebc/miniconda3/envs/sonic/bin/python /home/humebc/.vscode-server/extensions/ms-python.python-2019.11.50794/pythonFiles/ptvsd_launcher.py --default --client --host localhost --port 56251 /home/humebc/projects/st_genome/check_log_timings.py 
+Start time for trim_reads for M_18_1922_HUME-ST-35-45_AD002_Lane1 is 2019-12-29 21:52:18
+trim_reads for M_18_1922_HUME-ST-35-45_AD002_Lane1 took 0:10:45
+
+
+Start time for trim_reads for M_18_1922_HUME-ST-35-45_AD002_Lane2 is 2019-12-29 21:52:18
+trim_reads for M_18_1922_HUME-ST-35-45_AD002_Lane2 took 0:10:44
+
+
+Start time for trim_reads for M_18_1923_HUME-ST-5-7_AD007_Lane1 is 2019-12-29 21:52:18
+trim_reads for M_18_1923_HUME-ST-5-7_AD007_Lane1 took 0:39:54
+
+
+Start time for trim_reads for M_18_1923_HUME-ST-5-7_AD007_Lane2 is 2019-12-29 21:52:18
+trim_reads for M_18_1923_HUME-ST-5-7_AD007_Lane2 took 0:37:49
+
+
+Start time for trim_reads for M_18_1924_HUME-ST-8-11_AD019_Lane1 is 2019-12-29 21:52:18
+trim_reads for M_18_1924_HUME-ST-8-11_AD019_Lane1 took 1:17:49
+
+
+Start time for trim_reads for M_18_1924_HUME-ST-8-11_AD019_Lane2 is 2019-12-29 21:52:18
+trim_reads for M_18_1924_HUME-ST-8-11_AD019_Lane2 took 1:14:27
+
+
+Start time for trim_reads for M_17_426_1_AD08_Lane1 is 2019-12-29 21:52:18
+trim_reads for M_17_426_1_AD08_Lane1 took 4:28:49
+
+
+Start time for trim_reads for M_17_426_1_AD08_Lane2 is 2019-12-29 21:52:18
+trim_reads for M_17_426_1_AD08_Lane2 took 4:22:19
+
+
+Start time for rcorrector for M_18_1922_HUME-ST-35-45_AD002_Lane1 is 2019-12-29 22:03:03
+rcorrector for M_18_1922_HUME-ST-35-45_AD002_Lane1 took 14:58:47
+
+
+Start time for rcorrector for M_18_1922_HUME-ST-35-45_AD002_Lane2 is 2019-12-29 22:03:02
+rcorrector for M_18_1922_HUME-ST-35-45_AD002_Lane2 took 15:34:37
+
+
+Start time for rcorrector for M_18_1923_HUME-ST-5-7_AD007_Lane1 is 2019-12-29 22:32:12
+rcorrector for M_18_1923_HUME-ST-5-7_AD007_Lane1 took 10 days, 22:03:18
+
+
+Start time for rcorrector for M_18_1923_HUME-ST-5-7_AD007_Lane2 is 2019-12-29 22:30:07
+rcorrector for M_18_1923_HUME-ST-5-7_AD007_Lane2 took 10 days, 11:16:31
+
+
+Start time for rcorrector for M_18_1924_HUME-ST-8-11_AD019_Lane1 is 2019-12-30 13:37:39
+rcorrector for M_18_1924_HUME-ST-8-11_AD019_Lane1 has been running for 13 days, 2:39:01.593244 so far and is still not complete
+
+
+Start time for rcorrector for M_18_1924_HUME-ST-8-11_AD019_Lane2 is 2019-12-30 13:01:50
+rcorrector for M_18_1924_HUME-ST-8-11_AD019_Lane2 has been running for 13 days, 3:14:50.600415 so far and is still not complete
+
+
+Start time for rcorrector for M_17_426_1_AD08_Lane1 is 2020-01-09 20:35:30
+rcorrector for M_17_426_1_AD08_Lane1 has been running for 2 days, 19:41:10.607653 so far and is still not complete
+
+
+Start time for rcorrector for M_17_426_1_AD08_Lane2 is 2020-01-09 09:46:38
+rcorrector for M_17_426_1_AD08_Lane2 has been running for 3 days, 6:30:02.614844 so far and is still not complete
