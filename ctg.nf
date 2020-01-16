@@ -321,8 +321,8 @@ if (params.correct_from_scratch){
 
 		// These represent a considerable investment in time and so we should publish
 		publishDir = [
-				[path: params.mp_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_18*"],
-				[path: params.pe_corrected_reads_output_dir, mode: 'copy', overwrite: 'true', pattern: "M_17*"]
+				[path: params.mp_corrected_reads_output_dir, overwrite: 'true', pattern: "M_18*"],
+				[path: params.pe_corrected_reads_output_dir, overwrite: 'true', pattern: "M_17*"]
 			]
 
 		input:
@@ -469,18 +469,18 @@ process bwa_map_against_lutea{
 	if [[ $read_one == *".se."* ]]; then
 		bwa mem -t 24 ${params.lutea_ref_genome_path} $read_one > $out_sam_file_name
 		samtools view -S -b $out_sam_file_name > $out_bam_file_name
-		samtools view -f 4 $out_bam_file_name > $out_bam_unmapped_file_name
+		samtools view -b -f 4 $out_bam_file_name > $out_bam_unmapped_file_name
 	elif [[ $read_one == *"M_17"* ]]; then
 		bwa mem -t 24 ${params.lutea_ref_genome_path} $read_one $read_two > $out_sam_file_name
 		samtools view -S -b $out_sam_file_name > $out_bam_file_name
-		samtools view -F 2 $out_bam_file_name > $out_bam_unmapped_file_name
+		samtools view -b -F 2 $out_bam_file_name > $out_bam_unmapped_file_name
 	else
 		bwa mem -p -t 24 ${params.lutea_ref_genome_path} $read_one > $out_sam_file_name
 		samtools view -S -b $out_sam_file_name > $out_bam_file_name
-		samtools view -F 2 $out_bam_file_name > $out_bam_unmapped_file_name
+		samtools view -b -F 2 $out_bam_file_name > $out_bam_unmapped_file_name
 	fi
 	samtools fastq $out_bam_unmapped_file_name > $out_fastq_unmapped_file_name
-	gzip out_fastq_unmapped_file_name
+	gzip $out_fastq_unmapped_file_name
 	rm $out_sam_file_name $out_bam_file_name $out_bam_unmapped_file_name
 	"""
 
