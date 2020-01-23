@@ -496,98 +496,85 @@ process bwa_map_against_lutea{
 // // Here we will do a discovar assembly using on the pe reads. We will then use this assembly to map
 // // reads to to get the ideas of insert lengths that we will eventually use for the LG_allpaths assembly
 
-// // TODO Test that this input function is work the way we want it to
-// // We are expecting to just have the two pe (M_17) unmapped read files in there.
-process do_discovar_assembly{
-cache 'lenient'
-tag "discovar_assembly"
-conda "envs/stage_one.yaml"
-publishDir path: discovar_publish_path
+// I managed to invalidate the cache by accidentally modifying one of the output files.
+// As such I will check to see if the discovar assembly file has already been created and skip this if it has.
+// Check to see if the a.lines.fasta file already exists. If it does, then have a basic process that
+// collects the inputs from ch_discovar_assembly_creation_input and puts them into ch_pe_discovar_mapping_input
+// NB remember that index files must be created from the a.lines.fasta file for bwa mem to use.
+// run bwa index a.lines.fasta and then point bwa mem to the a.lines.fasta file. It will find the index files.
+discovar_denovo_fasta_file_path = file("${discovar_publish_path}/output/a.final/a.lines.fasta")
+if ( discovar_denovo_fasta_file_path.exists() ){
+	ch_discovar_assembly_creation_input.collect().set{ch_pe_discovar_mapping_input}
+}else{
+	process do_discovar_assembly{
+	cache 'lenient'
+	tag "discovar_assembly"
+	conda "envs/stage_one.yaml"
+	publishDir path: discovar_publish_path
 
-input:
-tuple file(unmapped_pe_fastq_gz_one), file(unmapped_pe_fastq_gz_two) from ch_discovar_assembly_creation_input.collect()
+	input:
+	tuple file(unmapped_pe_fastq_gz_one), file(unmapped_pe_fastq_gz_two) from ch_discovar_assembly_creation_input.collect()
 
-output:
-// We will keep the output a.lines.fasta to do our insert map against
-tuple file("**/stats"), file("**/a.lines.fasta") into ch_discovar_out
-tuple file(unmapped_pe_fastq_gz_one), file(unmapped_pe_fastq_gz_two) into ch_pe_discovar_mapping_input
+	output:
+	// We will keep the output a.lines.fasta to do our insert map against
+	tuple file("**/stats"), file("**/a.lines.fasta") into ch_discovar_out
+	tuple file(unmapped_pe_fastq_gz_one), file(unmapped_pe_fastq_gz_two) into ch_pe_discovar_mapping_input
 
-script:
-	"""
-	mkdir output
-	DiscovarDeNovo READS=${unmapped_pe_fastq_gz_one},${unmapped_pe_fastq_gz_two} OUT_DIR=\${PWD}/output/
-	"""
+	script:
+		"""
+		mkdir output
+		DiscovarDeNovo READS=${unmapped_pe_fastq_gz_one},${unmapped_pe_fastq_gz_two} OUT_DIR=\${PWD}/output/ MAX_MEM_GB=450
+		"""
+	}
 }
 
+// Once we have the discovar assembly we can map the pe reads and mp reads against it to get
+// our insert lengths.
+// We will not map the se reads as these do not have inserts
+process bwa_map_against_discovar{
+	cache 'lenient'
+	tag "$fastq_gz_to_map"
+	conda "envs/stage_one.yaml"
+	cpus params.bbmap_lutea_threads
+	publishDir = [
+		[path: mp_insert_size_info_output_dir, overwrite: 'true', pattern: "M_18*"],
+		[path: pe_insert_size_info_output_dir, overwrite: 'true', pattern: "M_17*"]
+	]
 
-// // // Once we have the discovar assembly we can map the pe reads and mp reads against it to get
-// // // our insert lengths.
+	input:
+	// All of the files coming in will now be single files that are interleaved pairs except for the 
+	// se files that should be treated as single pairs when mapping.
+	file fastq_gz_to_map from ch_mp_discovar_mapping_input.mix(ch_pe_discovar_mapping_input.flatten())
 
-// process bwa_map_against_discovar{
-// 	cache 'lenient'
-// 	tag "$fastq_gz_to_map"
-// 	conda "envs/stage_one.yaml"
-// 	cpus params.bbmap_lutea_threads
-// 	publishDir = [
-// 		[path: params.mp_insert_size_info_output_dir, overwrite: 'true', pattern: "M_18*"],
-// 		[path: params.pe_insert_size_info_output_dir, overwrite: 'true', pattern: "M_17*"]
-// 	]
 
-// 	// Here we will not work in tuples but rather work seq file by seq file
-// 	// So we will need to mix the two channels that are coming in and then flatten them
-
-// 	input:
-// 	// All of the files coming in will now be single files that are interleaved pairs except for the 
-// 	// se files that should be treated as single pairs when mapping.
-// 	file fastq_gz_to_map from ch_mp_discovar_mapping_input.mix(ch_pe_discovar_mapping_input)
-
-// 	// One channel for the pe outputs to go into the discovar assembly
-// 	// One channel for the mp outputs that will go into disovar mapping
-// 	// We will use all of the size info together and we may as well store it
-// 	// with the file that it is related to. So, let's output to a single channel
-// 	// That can be put into the prep process for the allpathsLG assembly
-// 	output:
-// 	tuple file(fastq_gz_to_map), file("*bwa_discovar.mapped.size_info.txt") into ch_discovar_assembly_creation_input
+	// We will use all of the size info together and we may as well store it
+	// with the file that it is related to. So, let's output to a single channel
+	// That can be put into the prep process for the allpathsLG assembly
+	// NB there is little point in doing a mapping for the se reads as these don't have insert lengths
+	// Instead we will simply output a dud size_info file
+	output:
+	tuple file(fastq_gz_to_map), file("*bwa_discovar.mapped.size_info.txt") into ch_all_paths_input
 	
-// 	script:
-// 	// Do mapping (fastq.gz --> sam)
-// 	// Conver to bam (sam --> bam)
-// 	// Put proper pairs into .txt for awk (bam --> txt)
-// 	// TODO awk stuff.
-// 	// Clean up unused files
-
-// 	// This conditional will check to see if we are working with a tuple (i.e. the pe)
-// 	// or not (i.e. the mp)
-// 	if (fastq_gz_to_map.size() > 1){
-// 		// Then this is a tuple and so must be the pe reads
-// 		read_one = fastq_gz_to_map[0]
-// 		read_two = fastq_gz_to_map[1]
-// 		out_sam_file_name = read_one.getName().replaceAll("fastq.gz", "bwa_lutea.sam")
-// 	}else{
-// 		read_one = fastq_gz_to_map
-// 		out_sam_file_name = read_one.getName().replaceAll("fastq.gz", "bwa_lutea.sam")
-// 	}
-// 	out_bam_file_name = out_sam_file_name.replaceAll(".sam", ".bam")
-// 	out_bam_unmapped_file_name = out_bam_file_name.replaceAll(".bam", ".unmapped.bam")
-// 	out_fastq_unmapped_file_name = out_bam_unmapped_file_name.replaceAll(".bam", ".fastq")
-// 	"""
-// 	if [[ $read_one == *".se."* ]]; then
-// 		bwa mem -t 24 ${params.lutea_ref_genome_path} $read_one > $out_sam_file_name
-// 		samtools view -S -b $out_sam_file_name > $out_bam_file_name
-// 		samtools view -b -f 4 $out_bam_file_name > $out_bam_unmapped_file_name
-// 	elif [[ $read_one == *"M_17"* ]]; then
-// 		bwa mem -t 24 ${params.lutea_ref_genome_path} $read_one $read_two > $out_sam_file_name
-// 		samtools view -S -b $out_sam_file_name > $out_bam_file_name
-// 		samtools view -b -F 2 $out_bam_file_name > $out_bam_unmapped_file_name
-// 	else
-// 		bwa mem -p -t 24 ${params.lutea_ref_genome_path} $read_one > $out_sam_file_name
-// 		samtools view -S -b $out_sam_file_name > $out_bam_file_name
-// 		samtools view -b -F 2 $out_bam_file_name > $out_bam_unmapped_file_name
-// 	fi
-// 	samtools fastq $out_bam_unmapped_file_name > $out_fastq_unmapped_file_name
-// 	gzip $out_fastq_unmapped_file_name
-// 	rm $out_sam_file_name $out_bam_file_name $out_bam_unmapped_file_name
-// 	"""
-
-// }
-
+	script:
+	// Do mapping (fastq.gz --> sam)
+	// Conver to bam (sam --> bam)
+	// Put proper pairs into .txt for awk (bam --> txt)
+	// Use awk to get the average insert size and the stdev
+	// Clean up unused files
+	discovar_assembly_fasta_path = discovar_denovo_fasta_file_path
+	out_sam_file_name = fastq_gz_to_map.getName().replaceAll("fastq.gz", "bwa_discovar.sam")
+	out_bam_file_name = out_sam_file_name.replaceAll(".sam", ".bam")
+	out_mapped_txt_file_name = out_bam_file_name.replaceAll(".bam", ".mapped.txt")
+	size_info_output_file_name = out_mapped_txt_file_name.replaceAll(".txt", ".size_info.txt")
+	"""
+	if [[ $fastq_gz_to_map == *".se."* ]]; then
+		echo No size info for se reads > $size_info_output_file_name
+	else
+		bwa mem -p -t 24 ${discovar_assembly_fasta_path} $fastq_gz_to_map > $out_sam_file_name
+		samtools view -S -b $out_sam_file_name > $out_bam_file_name
+		samtools view -f 2 $out_bam_file_name > $out_mapped_txt_file_name
+		awk -F '\\t' '{if (\$9 > 0) {tot+=\$9; totsqr+= \$9^2; cnt++;} } END{printf "mean insert size of %d; stdv of %d \\n", (tot/cnt), (sqrt(totsqr/cnt-(tot/cnt)^2))}' $out_mapped_txt_file_name > $size_info_output_file_name
+		rm $out_sam_file_name $out_bam_file_name $out_mapped_txt_file_name
+	fi
+	"""
+}
