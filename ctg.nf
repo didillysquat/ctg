@@ -531,6 +531,10 @@ if ( discovar_denovo_fasta_file_path.exists() ){
 // Once we have the discovar assembly we can map the pe reads and mp reads against it to get
 // our insert lengths.
 // We will not map the se reads as these do not have inserts
+// I think that the outputs of this mapping are likely very useful. For example, it could be good
+// to know which of the "unknown" reads have a large insert length.
+// It is also likely useful to know what the GC content of the mapped reads are and what proportion of the reads are mapping
+// As such I will keep hold of the bam file output. I will still delete the sam file and the txt file
 process bwa_map_against_discovar{
 	cache 'lenient'
 	tag "$fastq_gz_to_map"
@@ -554,6 +558,7 @@ process bwa_map_against_discovar{
 	// Instead we will simply output a dud size_info file
 	output:
 	tuple file(fastq_gz_to_map), file("*bwa_discovar.mapped.size_info.txt") into ch_all_paths_input
+	file "*bwa_discovar.bam" into ch_bam_qc_info_input
 	
 	script:
 	// Do mapping (fastq.gz --> sam)
@@ -574,7 +579,7 @@ process bwa_map_against_discovar{
 		samtools view -S -b $out_sam_file_name > $out_bam_file_name
 		samtools view -f 2 $out_bam_file_name > $out_mapped_txt_file_name
 		awk -F '\\t' '{if (\$9 > 0) {tot+=\$9; totsqr+= \$9^2; cnt++;} } END{printf "mean insert size of %d; stdv of %d \\n", (tot/cnt), (sqrt(totsqr/cnt-(tot/cnt)^2))}' $out_mapped_txt_file_name > $size_info_output_file_name
-		rm $out_sam_file_name $out_bam_file_name $out_mapped_txt_file_name
+		rm $out_sam_file_name $out_mapped_txt_file_name
 	fi
 	"""
 }
