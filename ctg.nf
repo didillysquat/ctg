@@ -558,7 +558,7 @@ process bwa_map_against_discovar{
 	// Instead we will simply output a dud size_info file
 	output:
 	tuple file(fastq_gz_to_map), file("*bwa_discovar.mapped.size_info.txt") into ch_all_paths_input
-	file "*bwa_discovar.bam" into ch_bam_qc_info_input
+	file "*bwa_discovar.bam" optional true into ch_bam_qc_info_input
 	
 	script:
 	// Do mapping (fastq.gz --> sam)
